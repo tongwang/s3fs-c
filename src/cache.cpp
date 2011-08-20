@@ -35,6 +35,9 @@ static stat_cache_t stat_cache;
 pthread_mutex_t stat_cache_lock;
 
 int get_stat_cache_entry(const char *path, struct stat *buf) {
+
+	cout << "******    get_stat_cache_entry called for [" << path << "]" << endl;
+
   pthread_mutex_lock(&stat_cache_lock);
   stat_cache_t::iterator iter = stat_cache.find(path);
   if(iter != stat_cache.end()) {

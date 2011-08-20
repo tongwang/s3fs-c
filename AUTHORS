@@ -9,3 +9,8 @@ Patches and improvements.
 3. Adrian Petrescu <apetresc@gmail.com>
 
 Converted the project to be autotools-based.
+
+4. Tong Wang <tong.wang.70@gmail.com>
+
+Rewrite and make it compatible with other tools (s3cmd, AWS Management Console, etc). Support explicit folder objects (key name end with /) and implicit folders.
+

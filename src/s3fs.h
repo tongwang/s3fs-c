@@ -106,6 +106,7 @@ static char *get_string(xmlDocPtr doc, xmlNodePtr node);
 static long get_time(xmlDocPtr doc, xmlNodePtr node);
 
 static int s3fs_getattr(const char *path, struct stat *stbuf);
+static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_entity);
 static int s3fs_readlink(const char *path, char *buf, size_t size);
 static int s3fs_mknod(const char* path, mode_t mode, dev_t rdev);
 static int s3fs_mkdir(const char *path, mode_t mode);
