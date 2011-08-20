@@ -53,8 +53,12 @@
 
 using namespace std;
 
+// a list of s3 objects
 struct s3_object {
   char *name;
+  long last_modified;
+  long size;
+  bool is_common_prefix;
   struct s3_object *next;
 };
 
@@ -121,7 +125,7 @@ class auto_head {
     headMap_t headMap;
 };
 
-static int insert_object(char *name, struct s3_object **head) {
+static int insert_object(const char *name, bool is_common_prefix, long last_modified, long size, struct s3_object **s3_objects) {
   size_t n_len = strlen(name) + 1;
   struct s3_object *new_object;
 
@@ -139,12 +143,16 @@ static int insert_object(char *name, struct s3_object **head) {
 
   strncpy(new_object->name, name, n_len);
 
-  if((*head) == NULL)
+  new_object->is_common_prefix = is_common_prefix;
+  new_object->last_modified = last_modified;
+  new_object->size = size;
+
+  if((*s3_objects) == NULL)
     new_object->next = NULL;
   else
-    new_object->next = (*head);
+    new_object->next = (*s3_objects);
 
-  *head = new_object;
+  *s3_objects = new_object;
 
   return 0;
 }
@@ -1410,11 +1418,20 @@ static int s3fs_getattr(const char *path, struct stat *stbuf) {
   }
 
   stbuf->st_mode = strtoul(responseHeaders["x-amz-meta-mode"].c_str(), (char **)NULL, 10);
+
+
   char* ContentType = 0;
   if (curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &ContentType) == 0) {
     if (ContentType)
       stbuf->st_mode |= strcmp(ContentType, "application/x-directory") == 0 ? S_IFDIR : S_IFREG;
   }
+
+
+  // twan: any path ends with "/" is a directory
+  if (*(path + strlen(path)-1) == '/') {
+	  stbuf->st_mode |= S_IFDIR;
+  }
+
 
   double ContentLength;
   if (curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD, &ContentLength) == 0)
@@ -2471,46 +2488,79 @@ static int s3fs_readdir(
   int n_reqs;
   int n_objects;
   int remaining_messages;
-  struct s3_object *head    = NULL;
-  struct s3_object *headref = NULL;
+  struct s3_object *s3_objects    = NULL;
+  struct s3_object *s3_objects_ptr = NULL;
   auto_head curl_map;
 
   if(foreground) 
     cout << "readdir[path=" << path << "]" << endl;
 
   // get a list of all the objects
-  if((list_bucket(path, &head)) != 0)
+  if((list_bucket(path, &s3_objects)) != 0)
     return -EIO;
 
-  if(head == NULL)
+  if(s3_objects == NULL)
     return 0;
 
-  n_objects = count_object_list(head);
+  n_objects = count_object_list(s3_objects);
 
   // populate fuse buffer
-  headref = head;
-  while(headref != NULL) {
-    filler(buf, headref->name, 0, 0);
-    headref = headref->next;
+  s3_objects_ptr = s3_objects;
+  while(s3_objects_ptr != NULL) {
+    filler(buf, s3_objects_ptr->name, 0, 0);
+    s3_objects_ptr = s3_objects_ptr->next;
   }
-  headref = head;
+  s3_objects_ptr = s3_objects;
 
   // populate the multi interface with an initial set of requests
   n_reqs = 0;
   mh = curl_multi_init();
-  while(n_reqs < MAX_REQUESTS && head != NULL) {
+  while(n_reqs < MAX_REQUESTS && s3_objects != NULL) {
     string fullpath = path;
     if(strcmp(path, "/") != 0)
-      fullpath += "/" + string(head->name);
+      fullpath += "/" + string(s3_objects->name);
     else
-      fullpath += string(head->name);
+      fullpath += string(s3_objects->name);
 
+    // if file stat is already in the cache, contiue
     if(get_stat_cache_entry(fullpath.c_str(), NULL) == 0) {
-      head = head->next;
+      s3_objects = s3_objects->next;
       continue;
     }
 
-    // file not cached, prepare a call to get_headers
+    if (!s3_objects->is_common_prefix) {
+    	// regular file
+    	struct stat st;
+    	memset(&st, 0, sizeof(st));
+
+    	st.st_nlink = 1; // see fuse FAQ
+    	// default mode
+    	st.st_mode = ACCESSPERMS;
+    	st.st_mode |= S_IFREG;
+
+    	// last modified time
+    	st.st_mtime = s3_objects->last_modified;
+
+    	// size
+    	st.st_size = s3_objects->size;
+
+    	// blocksstuff
+    	if(S_ISREG(st.st_mode))
+    		st.st_blocks = st.st_size / 512 + 1;
+
+    	// default owner and group
+    	st.st_uid = 0;
+    	st.st_gid = 0;
+
+    	add_stat_cache_entry(fullpath.c_str(), &st);
+
+    	continue;
+    }
+
+    // it is a directory, and not cached, prepare a call to get_headers
+    // directory object ends with "/"
+    fullpath += "/";
+    cout << "******    retrieving dir [" << fullpath << "]" << endl;
     head_data request_data;
     request_data.path = fullpath;
     CURL *curl_handle = create_head_handle(&request_data);
@@ -2525,8 +2575,10 @@ static int s3fs_readdir(
       return -EIO;
     }
 
+    cout << "******    URL [" << request_data.url << "]" << endl;
+
     // go to the next object.
-    head = head->next;
+    s3_objects = s3_objects->next;
   }
 
   // Start making requests.
@@ -2591,41 +2643,32 @@ static int s3fs_readdir(
         CURL *curl_handle = msg->easy_handle;
         head_data response = curl_map.get()[curl_handle];
 
+        cout << "******    received response [" << response.url << "]" << endl;
         struct stat st;
         memset(&st, 0, sizeof(st));
 
         st.st_nlink = 1; // see fuse FAQ
 
         // mode
-        st.st_mode = strtoul(
-            (*response.responseHeaders)["x-amz-meta-mode"].c_str(), (char **)NULL, 10);
-
-        // content-type
-        char *ContentType = 0;
-        if(curl_easy_getinfo(curl_handle, CURLINFO_CONTENT_TYPE, &ContentType) == 0)
-          if(ContentType)
-            st.st_mode |= strcmp(ContentType, "application/x-directory") == 0 ? S_IFDIR : S_IFREG;
+        st.st_mode = ACCESSPERMS;;
+        st.st_mode |= S_IFDIR;
 
         // mtime
-        st.st_mtime = strtoul((*response.responseHeaders)["x-amz-meta-mtime"].c_str(), (char **)NULL, 10);
-        if(st.st_mtime == 0) {
-          long LastModified;
-          if(curl_easy_getinfo(curl_handle, CURLINFO_FILETIME, &LastModified) == 0)
-            st.st_mtime = LastModified;
-        }
+	    long LastModified;
+	    if(curl_easy_getinfo(curl_handle, CURLINFO_FILETIME, &LastModified) == 0)
+		  st.st_mtime = LastModified;
 
         // size
         double ContentLength;
         if(curl_easy_getinfo(curl_handle, CURLINFO_CONTENT_LENGTH_DOWNLOAD, &ContentLength) == 0)
           st.st_size = static_cast<off_t>(ContentLength);
 
-        // blocksstuff
-        if(S_ISREG(st.st_mode))
-          st.st_blocks = st.st_size / 512 + 1;
+        // default owner and group
+        st.st_uid = 0;
+        st.st_gid = 0;
 
-        st.st_uid = strtoul((*response.responseHeaders)["x-amz-meta-uid"].c_str(), (char **)NULL, 10);
-        st.st_gid = strtoul((*response.responseHeaders)["x-amz-meta-gid"].c_str(), (char **)NULL, 10);
-
+        // remove last char /
+        response.path.resize(response.path.length() -1);
         add_stat_cache_entry(response.path.c_str(), &st);
 
         // cleanup
@@ -2634,19 +2677,51 @@ static int s3fs_readdir(
         n_reqs--;
 
         // add additional requests
-        while(n_reqs < MAX_REQUESTS && head != NULL) {
+        while(n_reqs < MAX_REQUESTS && s3_objects != NULL) {
           string fullpath = path;
           if(strcmp(path, "/") != 0)
-            fullpath += "/" + string(head->name);
+            fullpath += "/" + string(s3_objects->name);
           else
-            fullpath += string(head->name);
+            fullpath += string(s3_objects->name);
 
+          // TODO duplicate code
           if(get_stat_cache_entry(fullpath.c_str(), NULL) == 0) {
-            head = head->next;
+            s3_objects = s3_objects->next;
+            continue;
+          }
+
+          if (!s3_objects->is_common_prefix) {
+            // regular file
+            struct stat st;
+            memset(&st, 0, sizeof(st));
+
+            st.st_nlink = 1; // see fuse FAQ
+            // default mode
+            st.st_mode = ACCESSPERMS;
+            st.st_mode |= S_IFREG;
+
+            // last modified time
+            st.st_mtime = s3_objects->last_modified;
+
+            // size
+            st.st_size = s3_objects->size;
+
+            // blocksstuff
+            if(S_ISREG(st.st_mode))
+              st.st_blocks = st.st_size / 512 + 1;
+
+            // default owner and group
+            st.st_uid = 0;
+            st.st_gid = 0;
+
+            add_stat_cache_entry(fullpath.c_str(), &st);
+
             continue;
           }
 
           // file not cached, prepare a call to get_headers
+          // directory object ends with "/"
+          fullpath += "/";
           head_data request_data;
           request_data.path = fullpath;
           CURL *curl_handle = create_head_handle(&request_data);
@@ -2665,26 +2740,29 @@ static int s3fs_readdir(
           still_running++;
 
           // go to the next object.
-          head = head->next;
+          s3_objects = s3_objects->next;
         }
       } else {
         syslog(LOG_ERR, "readdir: curl_multi_add_handle code: %d msg: %s", 
             curlm_code, curl_multi_strerror(curlm_code));
 
         curl_multi_cleanup(mh);
-        free_object_list(headref);
+        free_object_list(s3_objects_ptr);
         return -EIO;
       }
     }
   }
 
   curl_multi_cleanup(mh);
-  free_object_list(headref);
+  free_object_list(s3_objects_ptr);
 
   return 0;
 }
 
-static int list_bucket(const char *path, struct s3_object **head) {
+/**
+ * use AWS's GET Bucket (List Objects) API to retrieve directory (path) information into a S3 object list
+ */
+static int list_bucket(const char *path, struct s3_object **s3_objects) {
   CURL *curl;
   int result; 
   char *s3_realpath;
@@ -2709,6 +2787,7 @@ static int list_bucket(const char *path, struct s3_object **head) {
 
   query += "&max-keys=1000";
 
+  // while where is more...
   while(truncated) {
     string url = host + resource + "?" + query;
 
@@ -2735,6 +2814,7 @@ static int list_bucket(const char *path, struct s3_object **head) {
     result = my_curl_easy_perform(curl, &body);
     destroy_curl_handle(curl);
 
+    // if there is error
     if(result != 0) {
       if(body.text)
         free(body.text);
@@ -2743,7 +2823,8 @@ static int list_bucket(const char *path, struct s3_object **head) {
       return result;
     }
 
-    if((append_objects_from_xml(body.text, head)) != 0)
+    // process response body and extract objects and common prefixes into s3 object list
+    if((append_objects_from_xml(body.text, s3_objects)) != 0)
       return -1;
 
     truncated = is_truncated(body.text);
@@ -2763,11 +2844,11 @@ static int list_bucket(const char *path, struct s3_object **head) {
   return 0;
 }
 
-static int append_objects_from_xml(const char *xml, struct s3_object **head) {
+static int append_objects_from_xml(const char *xml, struct s3_object **s3_object_list) {
+	cout << "******    xml [" << xml << "]" << endl;
   xmlDocPtr doc;
   xmlXPathContextPtr ctx;
-  xmlXPathObjectPtr contents_xp;
-  xmlNodeSetPtr content_nodes;
+
 
   doc = xmlReadMemory(xml, strlen(xml), "", NULL, 0);
   if(doc == NULL)
@@ -2777,6 +2858,9 @@ static int append_objects_from_xml(const char *xml, struct s3_object **head) {
   xmlXPathRegisterNs(ctx, (xmlChar *) "s3",
                      (xmlChar *) "http://s3.amazonaws.com/doc/2006-03-01/");
   
+  // process <Contents>
+  xmlXPathObjectPtr contents_xp;
+  xmlNodeSetPtr content_nodes;
   contents_xp = xmlXPathEvalExpression((xmlChar *) "//s3:Contents", ctx);
   content_nodes = contents_xp->nodesetval;
 
@@ -2785,17 +2869,68 @@ static int append_objects_from_xml(const char *xml, struct s3_object **head) {
     ctx->node = content_nodes->nodeTab[i];
 
     // object name
-    xmlXPathObjectPtr key = xmlXPathEvalExpression((xmlChar *) "s3:Key", ctx);
-    xmlNodeSetPtr key_nodes = key->nodesetval;
+    xmlXPathObjectPtr key_xml = xmlXPathEvalExpression((xmlChar *) "s3:Key", ctx);
+    xmlNodeSetPtr key_nodes = key_xml->nodesetval;
+    string key_string = get_string(doc, key_nodes->nodeTab[0]->xmlChildrenNode);
     char *name = get_object_name(doc, key_nodes->nodeTab[0]->xmlChildrenNode);
+    cout << "******    object name [" << name << "]" << endl;
+    string name_string = string(name);
 
-    if((insert_object(name, head)) != 0)
-      return -1;
+    xmlXPathObjectPtr last_modified_xml = xmlXPathEvalExpression((xmlChar *) "s3:LastModified", ctx);
+	xmlNodeSetPtr last_modified_nodes = last_modified_xml->nodesetval;
+	long last_modified = get_time(doc, last_modified_nodes->nodeTab[0]->xmlChildrenNode);
 
-    xmlXPathFreeObject(key);
+	xmlXPathObjectPtr size_xml = xmlXPathEvalExpression((xmlChar *) "s3:Size", ctx);
+	xmlNodeSetPtr size_nodes = size_xml->nodesetval;
+	char *size_string = get_string(doc, size_nodes->nodeTab[0]->xmlChildrenNode);
+	long size = strtoul(size_string, (char **)NULL, 10);
+
+    cout << "******    last modified [" << last_modified << "]" << endl;
+    cout << "******    size [" << size_string << "]" << endl;
+
+    // if object key ends with / and size is zero, then it is a directory object. DO not put it in the list
+    if (key_string.find_last_of('/') != key_string.length() -1 || size != 0) {
+    	if((insert_object(name_string.c_str(), false, last_modified, size, s3_object_list)) != 0)
+    	      return -1;
+    }
+
+    xmlXPathFreeObject(key_xml);
+    xmlXPathFreeObject(last_modified_xml);
+    xmlXPathFreeObject(size_xml);
   }
 
   xmlXPathFreeObject(contents_xp);
+
+
+  // process <CommonPrefixes>
+  xmlXPathObjectPtr common_prefixes_xp;
+  xmlNodeSetPtr common_prefix_nodes;
+  common_prefixes_xp = xmlXPathEvalExpression((xmlChar *) "//s3:CommonPrefixes", ctx);
+  if (common_prefixes_xp == NULL) {
+	  // there is no common prefixes
+	  return 0;
+  }
+  common_prefix_nodes = common_prefixes_xp->nodesetval;
+
+  for(i = 0; i < common_prefix_nodes->nodeNr; i++) {
+    ctx->node = common_prefix_nodes->nodeTab[i];
+
+    // object name
+    xmlXPathObjectPtr prefix = xmlXPathEvalExpression((xmlChar *) "s3:Prefix", ctx);
+    xmlNodeSetPtr prefix_nodes = prefix->nodesetval;
+    char *name = get_object_name(doc, prefix_nodes->nodeTab[0]->xmlChildrenNode);
+
+    cout << "******    prefix name [" << name << "]" << endl;
+
+    if((insert_object(name, true, 0, 0, s3_object_list)) != 0)
+      return -1;
+
+    xmlXPathFreeObject(prefix);
+  }
+
+  xmlXPathFreeObject(common_prefixes_xp);
+
+
   xmlXPathFreeContext(ctx);
   xmlFreeDoc(doc);
 
@@ -2838,6 +2973,27 @@ static bool is_truncated(const char *xml) {
 static char *get_object_name(xmlDocPtr doc, xmlNodePtr node) {
   return (char *) mybasename((char *) xmlNodeListGetString(doc, node, 1)).c_str();
 }
+
+static char *get_string(xmlDocPtr doc, xmlNodePtr node) {
+  return (char *)xmlNodeListGetString(doc, node, 1);
+}
+
+
+static long get_time(xmlDocPtr doc, xmlNodePtr node) {
+  char *time_string = (char *)xmlNodeListGetString(doc, node, 1);
+  tzset();
+
+//  char temp[64];
+//  memset(temp, 0, sizeof(temp));
+//  strncpy(temp, time_string, ts_len);
+
+  struct tm ctime;
+  memset(&ctime, 0, sizeof(struct tm));
+  strptime(time_string, "%FT%T%z", &ctime);
+
+  return mktime(&ctime);
+}
+
 
 static int remote_mountpath_exists(const char *path) {
   CURL *curl;

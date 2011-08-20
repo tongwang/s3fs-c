@@ -91,7 +91,7 @@ static int complete_multipart_upload(const char *path, std::string upload_id, st
 std::string md5sum(int fd);
 char *get_realpath(const char *path);
 
-static int insert_object(char *name, struct s3_object **head);
+static int insert_object(const char *name, bool is_common_prefix, long last_modified, long size, struct s3_object **head);
 static unsigned int count_object_list(struct s3_object *list);
 static int free_object(struct s3_object *object);
 static int free_object_list(struct s3_object *head);
@@ -102,6 +102,8 @@ static bool is_truncated(const char *xml);
 static int append_objects_from_xml(const char *xml, struct s3_object **head);
 static const char *get_next_marker(const char *xml);
 static char *get_object_name(xmlDocPtr doc, xmlNodePtr node);
+static char *get_string(xmlDocPtr doc, xmlNodePtr node);
+static long get_time(xmlDocPtr doc, xmlNodePtr node);
 
 static int s3fs_getattr(const char *path, struct stat *stbuf);
 static int s3fs_readlink(const char *path, char *buf, size_t size);
