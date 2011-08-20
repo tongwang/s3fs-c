@@ -12,5 +12,5 @@ Converted the project to be autotools-based.
 
 4. Tong Wang <tong.wang.70@gmail.com>
 
-Rewrite and make it compatible with other tools (s3cmd, AWS Management Console, etc). Support explicit folder objects (key name end with /) and implicit folders.
+Rewrite and make it compatible with other tools (s3cmd, AWS Management Console, etc). Supports explicit folder objects (key names end with /) and implicit folders. It is no longer compatible with the original s3fs.
 
