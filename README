@@ -9,4 +9,3 @@ Known Issues:
 s3fs should be working fine with S3 storage. However, There are couple of limitations:
 
 * There is no full UID/GID support yet, everything looks as "root" and if you allow others to access the bucket, others can erase files. There is, however, permissions support built in.
-* Moving/renaming implicit folders is not currently supported. It will be added at a later time.

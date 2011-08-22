@@ -418,7 +418,6 @@ static int mkdirp(const string& path, mode_t mode) {
 
 /**
  * @return fuse return code
- * TODO return pair<int, headers_t>?!?
  */
 int get_headers(const char* path, headers_t& meta) {
   int result;
@@ -453,12 +452,14 @@ int get_headers(const char* path, headers_t& meta) {
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers.get());
 
   string my_url = prepare_url(url.c_str());
+
   curl_easy_setopt(curl, CURLOPT_URL, my_url.c_str());
 
   if(debug)
     syslog(LOG_DEBUG, "get_headers: now calling my_curl_easy_perform");
 
   result = my_curl_easy_perform(curl);
+
   destroy_curl_handle(curl);
   free(s3_realpath);
 
@@ -1363,8 +1364,6 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
   if(foreground) 
     cout << "s3fs_getattr[path=" << path << "]" << endl;
 
-  cout << "******    s3fs_getattr [" << path << "]" << endl;
-
   memset(stbuf, 0, sizeof(struct stat));
   if(strcmp(path, "/") == 0) {
     stbuf->st_nlink = 1; // see fuse faq
@@ -1376,8 +1375,6 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
     return 0;
 
   s3_realpath = get_realpath(path);
-
-  cout << "******    s3fs_getattr real path [" << s3_realpath << "]" << endl;
 
   body.text = (char *)malloc(1);
   body.size = 0;
@@ -1408,8 +1405,6 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
 
   result = my_curl_easy_perform(curl, &body);
 
-  cout << "******    RESULT [" << result << "]" << endl;
-
   if(result == 0) {
 	  stbuf->st_nlink = 1; // see fuse faq
 
@@ -1439,7 +1434,6 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
 	  // update stat cache
 	  add_stat_cache_entry(path, stbuf);
   } else if (result == -ENOENT && resolve_no_entity) {
-	  cout << "******    not found [" << path << "]" << endl;
 	  // object not found
 	  // it could be a directory object or implicit directory, or deleted object
 	  // try directory object (path/) first
@@ -1457,8 +1451,6 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
 			  parent_dir_path = "/";
 		  }
 
-		  cout << "******    list parent dir [" << parent_dir_path << "]" << " looking for " << name << endl;
-
 		  struct s3_object *s3_objects    = NULL;
 		  struct s3_object *s3_objects_ptr = NULL;
 
@@ -1470,7 +1462,6 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
 		  while(s3_objects_ptr != NULL) {
 			  if (s3_objects_ptr->is_common_prefix) {
 				  if (strcmp(s3_objects_ptr->name, name.c_str()) == 0) {
-					  cout << "******    found as common prefix [" << name << "]" << endl;
 					  // it is an implicit directory
 					  stbuf->st_nlink = 1; // see fuse faq
 					  stbuf->st_mode = ACCESSPERMS;
@@ -1698,7 +1689,7 @@ static int s3fs_mkdir(const char *path, mode_t mode) {
   auto_curl_slist headers;
 
   if(foreground) 
-    cout << "mkdir[path=" << path << "][mode=" << mode << "]" << endl;
+    cout << "mkdir[path=" << path << "]" << endl;
 
   // folder object ends with /
   string directory_object_path = string(path) + "/";
@@ -1749,8 +1740,6 @@ static int s3fs_unlink(const char *path) {
 
   if(foreground) 
     cout << "unlink[path=" << path << "]" << endl;
-
-  cout << "******    s3fs_unlink [" << path << "]" << endl;
 
   struct stat st;
   result = s3fs_getattr(path, &st);
@@ -1903,23 +1892,28 @@ static int clone_directory_object(const char *from, const char *to) {
   if(debug)
     syslog(LOG_DEBUG, "clone_directory_object [from=%s] [to=%s]", from, to);
 
-  // How to determine mode?
-  mode = 493;
+
+  // if the from directory is a vitrual directory, then do not create to directory
+  result = get_headers(from_with_slash.c_str(), meta);
+  if (result == -ENOENT) {
+	  // directory object does not exist
+	  return 0;
+  }
+  if(result != 0) {
+	  return result;
+  }
 
   // create the new directory object
-  result = s3fs_mkdir(to, mode);
+  result = s3fs_mkdir(to, 0);
   if(result != 0)
     return result;
 
-  // and transfer its attributes
-  result = get_headers(from_with_slash.c_str(), meta);
-  if(result != 0)
-    return result;
-
+  // transfer from's attributes to to's
   meta["x-amz-copy-source"] = urlEncode("/" + bucket + mount_prefix + from_with_slash);
   meta["x-amz-metadata-directive"] = "REPLACE";
 
   result = put_headers(to_with_slash.c_str(), meta);
+
   if(result != 0)
     return result;
 
@@ -1938,9 +1932,6 @@ static int rename_directory(const char *from, const char *to) {
   string from_path;
   MVNODE *head = NULL;
   MVNODE *tail = NULL;
-
-  cout << "******    rename_directory from [" << from << "] to [" << to << "]" << endl;
-  cout << "******    mount_prefix [" << mount_prefix << "]" << endl;
 
   if(foreground) 
     cout << "rename_directory[from=" << from << "][to=" << to << "]" << endl;
@@ -1989,10 +1980,8 @@ static int rename_directory(const char *from, const char *to) {
     query.append(IntToStr(max_keys));
 
     // this is the list objects url with prefix from/, without delimiter.
-    // retrieve all objects unders from/ and it sub-directories
+    // retrieve all objects under from/ and it sub-directories
     string url = host + resource + "?" + query;
-
-    cout << "******    URL [" << url << "]" << endl;
 
     {
       curl = create_curl_handle();
@@ -2033,8 +2022,6 @@ static int rename_directory(const char *from, const char *to) {
     }
 
     // process list objects (from/) result
-    cout << "******    response [" << body.text << "]" << endl;
-
     xmlDocPtr doc = xmlReadMemory(body.text, body.size, "", NULL, 0);
     if (doc != NULL && doc->children != NULL) {
       for (xmlNodePtr cur_node = doc->children->children;
@@ -2072,7 +2059,7 @@ static int rename_directory(const char *from, const char *to) {
             }
 
             if (key.size() > 0) {
-            	// check if key is the folder object itself
+            	// check if key is the "from/" folder object itself
             	string from_with_slash = string(from).substr(1) + "/";
             	if (strcmp(key.c_str(), from_with_slash.c_str()) != 0) {
 				   num_keys++;
@@ -2091,7 +2078,6 @@ static int rename_directory(const char *from, const char *to) {
 				   }
 
 				   // push this one onto the stack
-				   cout << "******    pushing to move stack [" << path << "] to [" << new_path << "] is_dir = " << is_dir << endl;
 				   tail = add_mvnode(head, (char *)path.c_str(), (char *)new_path.c_str(), is_dir);
 				}
             }
@@ -2125,14 +2111,12 @@ static int rename_directory(const char *from, const char *to) {
  
   do {
     if(my_head->is_dir) {
-    	cout << "******    before clone dir [" << my_head->old_path << "] to [" << my_head->new_path << "]" << endl;
       result = clone_directory_object( my_head->old_path, my_head->new_path);
       if(result != 0) {
          free_mvnodes(head);
          syslog(LOG_ERR, "clone_directory_object returned an error");
          return -EIO;
       }
-      cout << "******    after clone dir [" << my_head->old_path << "] to [" << my_head->new_path << "]" << endl;
     }
     next = my_head->next;
     my_head = next;
@@ -2537,7 +2521,6 @@ static int s3fs_readdir(
     // it is a directory, and not cached, prepare a call to get_headers
     // directory object ends with "/"
     fullpath += "/";
-    cout << "******    retrieving dir [" << fullpath << "]" << endl;
     head_data request_data;
     request_data.path = fullpath;
     CURL *curl_handle = create_head_handle(&request_data);
@@ -2551,8 +2534,6 @@ static int s3fs_readdir(
           curlm_code, curl_multi_strerror(curlm_code));
       return -EIO;
     }
-
-    cout << "******    URL [" << request_data.url << "]" << endl;
 
     // go to the next object.
     s3_objects = s3_objects->next;
@@ -2620,7 +2601,6 @@ static int s3fs_readdir(
         CURL *curl_handle = msg->easy_handle;
         head_data response = curl_map.get()[curl_handle];
 
-        cout << "******    received response [" << *(response.url) << "]" << endl;
         struct stat st;
         memset(&st, 0, sizeof(st));
 
@@ -2811,7 +2791,6 @@ static int list_bucket(const char *path, struct s3_object **s3_objects) {
 }
 
 static int append_objects_from_xml(const char *xml, struct s3_object **s3_object_list) {
-	cout << "******    xml [" << xml << "]" << endl;
   xmlDocPtr doc;
   xmlXPathContextPtr ctx;
 
@@ -2839,7 +2818,6 @@ static int append_objects_from_xml(const char *xml, struct s3_object **s3_object
     xmlNodeSetPtr key_nodes = key_xml->nodesetval;
     string key_string = get_string(doc, key_nodes->nodeTab[0]->xmlChildrenNode);
     char *name = get_object_name(doc, key_nodes->nodeTab[0]->xmlChildrenNode);
-    cout << "******    object name [" << name << "]" << endl;
     string name_string = string(name);
 
     xmlXPathObjectPtr last_modified_xml = xmlXPathEvalExpression((xmlChar *) "s3:LastModified", ctx);
@@ -2850,9 +2828,6 @@ static int append_objects_from_xml(const char *xml, struct s3_object **s3_object
 	xmlNodeSetPtr size_nodes = size_xml->nodesetval;
 	char *size_string = get_string(doc, size_nodes->nodeTab[0]->xmlChildrenNode);
 	long size = strtoul(size_string, (char **)NULL, 10);
-
-    cout << "******    last modified [" << last_modified << "]" << endl;
-    cout << "******    size [" << size_string << "]" << endl;
 
     // if object key ends with / and size is zero, then it is a directory object. DO not put it in the list
     if (key_string.find_last_of('/') != key_string.length() -1 || size != 0) {
@@ -2885,8 +2860,6 @@ static int append_objects_from_xml(const char *xml, struct s3_object **s3_object
     xmlXPathObjectPtr prefix = xmlXPathEvalExpression((xmlChar *) "s3:Prefix", ctx);
     xmlNodeSetPtr prefix_nodes = prefix->nodesetval;
     char *name = get_object_name(doc, prefix_nodes->nodeTab[0]->xmlChildrenNode);
-
-    cout << "******    prefix name [" << name << "]" << endl;
 
     if((insert_object(name, true, 0, 0, s3_object_list)) != 0)
       return -1;
