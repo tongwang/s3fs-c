@@ -1,5 +1,9 @@
-ChangeLog for S3FS
+ChangeLog for S3FS-C
 ------------------
+
+Aug 19, 2011
+
+Tong Wang forked s3fs-1.59, made it compatible with other S3 tools. 
 
 Version 1.1 -- Mon Oct 18 2010
 
