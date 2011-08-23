@@ -18,6 +18,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 
+/*
+ * Modified by Tong Wang <tong.wang.70@gmail.com> on August 2011
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2110,56 +2114,17 @@ static int s3fs_link(const char *from, const char *to) {
 }
 
 static int s3fs_chmod(const char *path, mode_t mode) {
-  int result;
-  char *s3_realpath;
-  headers_t meta;
-
   if(foreground) 
     printf("s3fs_chmod [path=%s] [mode=%d]\n", path, mode);
 
-  result = get_headers(path, meta);
-  if(result != 0)
-    return result;
-
-  s3_realpath = get_realpath(path);
-  meta["x-amz-meta-mode"] = str(mode);
-  meta["x-amz-copy-source"] = urlEncode("/" + bucket + s3_realpath);
-  meta["x-amz-metadata-directive"] = "REPLACE";
-  free(s3_realpath);
-
-  delete_stat_cache_entry(path);
-
-  return put_headers(path, meta);
+  return 0;
 }
 
 static int s3fs_chown(const char *path, uid_t uid, gid_t gid) {
-  int result;
-  char *s3_realpath;
-
   if(foreground) 
     printf("s3fs_chown [path=%s] [uid=%d] [gid=%d]\n", path, uid, gid);
 
-  headers_t meta;
-  result = get_headers(path, meta);
-  if(result != 0)
-     return result;
-
-  struct passwd *aaa = getpwuid(uid);
-  if(aaa != 0)
-    meta["x-amz-meta-uid"] = str((*aaa).pw_uid);
-
-  struct group *bbb = getgrgid(gid);
-  if(bbb != 0)
-    meta["x-amz-meta-gid"] = str((*bbb).gr_gid);
-
-  s3_realpath = get_realpath(path);
-  meta["x-amz-copy-source"] = urlEncode("/" + bucket + s3_realpath);
-  meta["x-amz-metadata-directive"] = "REPLACE";
-  free(s3_realpath);
-
-  delete_stat_cache_entry(path);
-
-  return put_headers(path, meta);
+  return 0;
 }
 
 static int s3fs_truncate(const char *path, off_t size) {
