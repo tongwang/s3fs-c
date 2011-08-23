@@ -1492,48 +1492,7 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
 }
 
 static int s3fs_readlink(const char *path, char *buf, size_t size) {
-  int fd = -1;
-  if (size > 0) {
-    --size; // reserve nil terminator
-
-    if(foreground) 
-      cout << "readlink[path=" << path << "]" << endl;
-
-    fd = get_local_fd(path);
-    if(fd < 0) {
-      syslog(LOG_ERR, "line %d: get_local_fd: %d", __LINE__, -fd);
-      return -EIO;
-    }
-
-    struct stat st;
-
-    if(fstat(fd, &st) == -1) {
-      syslog(LOG_ERR, "line %d: fstat: %d", __LINE__, -errno);
-
-      if(fd > 0)
-        close(fd);
-
-      return -errno;
-    }
-
-    if(st.st_size < (off_t)size)
-      size = st.st_size;
-
-    if(pread(fd, buf, size, 0) == -1) {
-      syslog(LOG_ERR, "line %d: pread: %d", __LINE__, -errno);
-
-      if(fd > 0) 
-        close(fd);
-
-      return -errno;
-    }
-
-    buf[size] = 0;
-  }
-
-  if(fd > 0)
-    close(fd);
-
+  // s3fs-c does not support symbolic links
   return 0;
 }
 
@@ -1614,10 +1573,7 @@ static int create_file_object(const char *path, mode_t mode) {
   headers.append("Content-Type: " + contentType);
   // x-amz headers: (a) alphabetical order and (b) no spaces after colon
   headers.append("x-amz-acl:" + default_acl);
-  headers.append("x-amz-meta-gid:" + str(getgid()));
-  headers.append("x-amz-meta-mode:" + str(mode));
   headers.append("x-amz-meta-mtime:" + str(time(NULL)));
-  headers.append("x-amz-meta-uid:" + str(getuid()));
   if(public_bucket.substr(0,1) != "1")
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("PUT", contentType, date, headers.get(), resource));
@@ -1810,42 +1766,9 @@ static int s3fs_rmdir(const char *path) {
 }
 
 static int s3fs_symlink(const char *from, const char *to) {
-  int result;
-  int fd = -1;
-
-  if(foreground) 
-    cout << "s3fs_symlink[from=" << from << "][to=" << to << "]" << endl;
-
-  headers_t headers;
-  headers["x-amz-meta-mode"] = str(S_IFLNK);
-  headers["x-amz-meta-mtime"] = str(time(NULL));
-
-  fd = fileno(tmpfile());
-  if(fd == -1) {
-    syslog(LOG_ERR, "line %d: error: fileno(tmpfile()): %d", __LINE__, -errno);
-    return -errno;
-  }
-
-  if(pwrite(fd, from, strlen(from), 0) == -1) {
-    syslog(LOG_ERR, "line %d: error: pwrite: %d", __LINE__, -errno);
-    if(fd > 0)
-      close(fd);
-
-    return -errno;
-  }
-
-  result = put_local_fd(to, headers, fd);
-  if(result != 0) {
-    if(fd > 0)
-      close(fd);
-
-    return result;
-  }
-
-  if(fd > 0)
-    close(fd);
-
-  return 0;
+	if(foreground)
+	    cout << "symlink[from=" << from << "][to=" << to << "]" << endl;
+	  return -EPERM;
 }
 
 static int rename_object(const char *from, const char *to) {
