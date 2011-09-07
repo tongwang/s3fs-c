@@ -135,7 +135,7 @@ static int s3fs_readdir(
     const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
 static int s3fs_access(const char *path, int mask);
 static int s3fs_utimens(const char *path, const struct timespec ts[2]);
-static int remote_mountpath_exists(const char *path);
+//static int remote_mountpath_exists(const char *path);
 static void* s3fs_init(struct fuse_conn_info *conn);
 static void s3fs_destroy(void*);
 
