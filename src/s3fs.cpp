@@ -631,7 +631,7 @@ static int put_headers(const char *path, headers_t meta) {
 
   // files larger than 5GB must be modified via the multipart interface
   s3fs_getattr(path, &buf);
-  if(buf.st_size >= 5368709120)
+  if(buf.st_size >= FIVE_GB)
     return(put_multipart_headers(path, meta));
 
   s3_realpath = get_realpath(path);
@@ -1505,7 +1505,7 @@ string md5sum(int fd) {
   char buf[512];
   char hexbuf[3];
   ssize_t bytes;
-  char *md5 = (char *)malloc(2 * MD5_DIGEST_LENGTH + 1);
+  char md5[2 * MD5_DIGEST_LENGTH + 1];
   unsigned char *result = (unsigned char *) malloc(MD5_DIGEST_LENGTH);
   
   memset(buf, 0, 512);
@@ -1526,7 +1526,7 @@ string md5sum(int fd) {
   free(result);
   lseek(fd, 0, 0);
 
-  return md5;
+  return string(md5);
 }
 
 static int s3fs_getattr(const char *path, struct stat *stbuf) {
@@ -2332,7 +2332,7 @@ static int s3fs_rename(const char *from, const char *to) {
   // files larger than 5GB must be modified via the multipart interface
   if(S_ISDIR(buf.st_mode))
     result = rename_directory(from, to);
-  else if(buf.st_size >= 5368709120)
+  else if(buf.st_size >= FIVE_GB)
     result = rename_large_object(from, to);
   else
     result = rename_object(from, to);
@@ -3084,7 +3084,7 @@ static unsigned long id_function(void) {
 }
 
 static void* s3fs_init(struct fuse_conn_info *conn) {
-  syslog(LOG_INFO, "init $Rev: 363 $");
+  syslog(LOG_INFO, "init $Rev: 367 $");
   // openssl
   mutex_buf = static_cast<pthread_mutex_t*>(malloc(CRYPTO_num_locks() * sizeof(pthread_mutex_t)));
   for (int i = 0; i < CRYPTO_num_locks(); i++)
