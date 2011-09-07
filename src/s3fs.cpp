@@ -605,6 +605,7 @@ int get_local_fd(const char* path) {
       // make the file's mtime match that of the file on s3
       struct utimbuf n_mtime;
       n_mtime.modtime = strtoul(responseHeaders["x-amz-meta-mtime"].c_str(), (char **) NULL, 10);
+      n_mtime.actime = n_mtime.modtime;
       if((utime(cache_path.c_str(), &n_mtime)) == -1) {
         YIKES(-errno);
       }
@@ -700,6 +701,7 @@ static int put_headers(const char *path, headers_t meta) {
 
     if((stat(cache_path.c_str(), &st)) == 0) {
       n_mtime.modtime = strtoul(meta["x-amz-meta-mtime"].c_str(), (char **) NULL, 10);
+      n_mtime.actime = n_mtime.modtime;
       if((utime(cache_path.c_str(), &n_mtime)) == -1) {
         YIKES(-errno);
       }
@@ -2269,6 +2271,7 @@ static int s3fs_flush(const char *path, struct fuse_file_info *fi) {
 
       if((stat(cache_path.c_str(), &st)) == 0) {
         n_mtime.modtime = strtoul(meta["x-amz-meta-mtime"].c_str(), (char **) NULL, 10);
+        n_mtime.actime = n_mtime.modtime;
         if((utime(cache_path.c_str(), &n_mtime)) == -1) {
           YIKES(-errno);
         }
@@ -2850,7 +2853,7 @@ static unsigned long id_function(void) {
 }
 
 static void* s3fs_init(struct fuse_conn_info *conn) {
-  syslog(LOG_INFO, "init $Rev: 358 $");
+  syslog(LOG_INFO, "init $Rev: 359 $");
   // openssl
   mutex_buf = static_cast<pthread_mutex_t*>(malloc(CRYPTO_num_locks() * sizeof(pthread_mutex_t)));
   for (int i = 0; i < CRYPTO_num_locks(); i++)
