@@ -1,6 +1,10 @@
 ChangeLog for S3FS-C
 ------------------
 
+Sep 7, 2011
+
+memorycraft forked s3fs-c, merge from s3fs-1.61. 
+
 Aug 19, 2011
 
 Tong Wang forked s3fs-1.59, made it compatible with other S3 tools. 

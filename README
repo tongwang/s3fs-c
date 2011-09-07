@@ -1,6 +1,6 @@
 S3FS-Cloudpack
 
-S3FS-Cloudpack is a project fork from S3FS-C and merged from S3FS 1.5.9 to current stable (1.6.1) 
+S3FS-Cloudpack is a project fork from S3FS-C(based on 1.59) and merged from current stable (1.61) 
 
 For installation and other instructions, see http://code.google.com/p/s3fs/wiki/FuseOverAmazon
 
