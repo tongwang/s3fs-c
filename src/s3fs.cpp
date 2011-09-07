@@ -293,10 +293,9 @@ string calc_signature(
   StringToSign += content_type + "\n";
   StringToSign += date + "\n";
   int count = 0;
-  if (headers != 0) {
+  if(headers != 0) {
     do {
-      //###cout << headers->data << endl;
-      if (strncmp(headers->data, "x-amz", 5) == 0) {
+      if(strncmp(headers->data, "x-amz", 5) == 0) {
         ++count;
         StringToSign += headers->data;
         StringToSign += 10; // linefeed
@@ -2853,7 +2852,7 @@ static unsigned long id_function(void) {
 }
 
 static void* s3fs_init(struct fuse_conn_info *conn) {
-  syslog(LOG_INFO, "init $Rev: 361 $");
+  syslog(LOG_INFO, "init $Rev: 362 $");
   // openssl
   mutex_buf = static_cast<pthread_mutex_t*>(malloc(CRYPTO_num_locks() * sizeof(pthread_mutex_t)));
   for (int i = 0; i < CRYPTO_num_locks(); i++)
@@ -3648,6 +3647,7 @@ static int my_fuse_opt_proc(void *data, const char *arg, int key, struct fuse_ar
 
 int main(int argc, char *argv[]) {
   int ch;
+  int fuse_res;
   int option_index = 0; 
 
   static const struct option long_opts[] = {
@@ -3827,5 +3827,8 @@ int main(int argc, char *argv[]) {
   s3fs_oper.create = s3fs_create;
 
   // now passing things off to fuse, fuse will finish evaluating the command line args
-  return fuse_main(custom_args.argc, custom_args.argv, &s3fs_oper, NULL);
+  fuse_res = fuse_main(custom_args.argc, custom_args.argv, &s3fs_oper, NULL);
+  fuse_opt_free_args(&custom_args);
+
+  return fuse_res;
 }
