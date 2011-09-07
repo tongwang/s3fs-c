@@ -2853,7 +2853,7 @@ static unsigned long id_function(void) {
 }
 
 static void* s3fs_init(struct fuse_conn_info *conn) {
-  syslog(LOG_INFO, "init $Rev: 359 $");
+  syslog(LOG_INFO, "init $Rev: 361 $");
   // openssl
   mutex_buf = static_cast<pthread_mutex_t*>(malloc(CRYPTO_num_locks() * sizeof(pthread_mutex_t)));
   for (int i = 0; i < CRYPTO_num_locks(); i++)
@@ -3515,6 +3515,8 @@ static int my_fuse_opt_proc(void *data, const char *arg, int key, struct fuse_ar
         exit(EXIT_FAILURE);
       }
     }
+
+    closedir(dp);
   }
 
   if (key == FUSE_OPT_KEY_OPT) {
