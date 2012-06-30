@@ -17,3 +17,7 @@ Rewrite and make it compatible with other tools (s3cmd, AWS Management Console, 
 5. memorycraft <memorycraft@gmail.com>
 
 Merge s3fs-1.61 into s3fs-c()1.59.
+
+6. lightpriest <or.cohen007@gmail.com>
+
+Added compatibility for folders that were created by original s3fs (Content-Type: application/x-directory)
