@@ -1,6 +1,21 @@
-S3FS-Cloudpack
+S3FS-C
 
-S3FS-Cloudpack is a project fork from S3FS-C(based on 1.59) and merged from current stable (1.61) 
+S3FS-C is a FUSE (File System in User Space) based file system backed by Amazon S3 buckets. Once mounted, a S3 bucket can be used just like it was a local file system. 
+
+This project was forked from S3FS (http://code.google.com/p/s3fs/) release 1.59 (updated to 1.61) and being rewritten to be compatible with other S3 clients such as s3cmd, AWS Management Console, etc. Some major differences between S3FS-C and S3FS include:
+
+* S3FS-C supports folder objects created by AWS Management Console. AWS management Console's folder is a zero-byte object with key that ends with a slash, i.e. "folder_name/". S3FS however uses a different folder scheme: folder is a zero-byte object with it matadata Content-Type set to application/x-directory. 
+* S3FS-C also supports implicit (virtual) folders, folders that do not have any S3 objects to represent them, but are implied by keys of other S3 objects. For example key "abc/def.txt" implies a folder called "abc". That makes S3FS-C compatible with many S3 clients such as s3cmd.
+* Unlike S3FS, S3FS-C no longer relies on object's metadata to store information about files and directories, such as uid, gid, mode, modified time. The main reason is that other S3 clients do not populate these matadata. For compatibility reason, S3FS-C can't assume the presence of the metadata. As a result, S3FS-C no longer reads matadata for each file to populate stat, saving one HTTP HEAD call for each file.
+* For compatibility reason, S3FS-C does not support symbolic links, as S3FS's symbolic links are shown as regular objects in other S3 clients.
+
+Although S3FS-C is compatible with other S3 clients, it is NOT compatible with s3fs.
 
 For installation and other instructions, see http://code.google.com/p/s3fs/wiki/FuseOverAmazon
 
+Known Issues:
+-------------
+S3FS-C should be working fine with S3 storage. However, There are couple of limitations:
+
+* There is no full UID/GID support. Owner and group are all "root". chown operation is a no-op. 
+* File and directory's permissions are hard-coded to be "rwxrwxrwx". chmode operation is a no-op. If you want to secure the S3 bucket, set the owners and permissions of the mount point appropriately.
