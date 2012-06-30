@@ -1602,6 +1602,15 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
 	  } else {
 		  stbuf->st_mode |= S_IFREG;
 	  }
+	  
+	  // Check for folders that were created by original s3fs
+    if (stbuf->st_mode != S_IFDIR) {
+      char *ContentType = 0;
+      if(curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &ContentType) == 0)
+        if(ContentType)
+          stbuf->st_mode = strcmp(ContentType, "application/x-directory") == 0 ? S_IFDIR : stbuf->st_mode;
+	  }
+
 
 	  stbuf->st_blocks = stbuf->st_size / 512 + 1;
 
