@@ -18,10 +18,6 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 
-/*
- * Modified by Tong Wang <tong.wang.70@gmail.com> on August 2011
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -293,10 +289,9 @@ string calc_signature(
   StringToSign += content_type + "\n";
   StringToSign += date + "\n";
   int count = 0;
-  if (headers != 0) {
+  if(headers != 0) {
     do {
-      //###cout << headers->data << endl;
-      if (strncmp(headers->data, "x-amz", 5) == 0) {
+      if(strncmp(headers->data, "x-amz", 5) == 0) {
         ++count;
         StringToSign += headers->data;
         StringToSign += 10; // linefeed
@@ -605,6 +600,7 @@ int get_local_fd(const char* path) {
       // make the file's mtime match that of the file on s3
       struct utimbuf n_mtime;
       n_mtime.modtime = strtoul(responseHeaders["x-amz-meta-mtime"].c_str(), (char **) NULL, 10);
+      n_mtime.actime = n_mtime.modtime;
       if((utime(cache_path.c_str(), &n_mtime)) == -1) {
         YIKES(-errno);
       }
@@ -626,11 +622,17 @@ static int put_headers(const char *path, headers_t meta) {
   char *s3_realpath;
   string url;
   string resource;
+  struct stat buf;
   struct BodyStruct body;
   CURL *curl = NULL;
 
   if(foreground) 
     cout << "   put_headers[path=" << path << "]" << endl;
+
+  // files larger than 5GB must be modified via the multipart interface
+  s3fs_getattr(path, &buf);
+  if(buf.st_size >= FIVE_GB)
+    return(put_multipart_headers(path, meta));
 
   s3_realpath = get_realpath(path);
   resource = urlEncode(service_path + bucket + s3_realpath);
@@ -700,11 +702,86 @@ static int put_headers(const char *path, headers_t meta) {
 
     if((stat(cache_path.c_str(), &st)) == 0) {
       n_mtime.modtime = strtoul(meta["x-amz-meta-mtime"].c_str(), (char **) NULL, 10);
+      n_mtime.actime = n_mtime.modtime;
       if((utime(cache_path.c_str(), &n_mtime)) == -1) {
         YIKES(-errno);
       }
     }
   }
+
+  return 0;
+}
+
+static int put_multipart_headers(const char *path, headers_t meta) {
+  int result;
+  char *s3_realpath;
+  string url;
+  string resource;
+  string upload_id;
+  struct stat buf;
+  struct BodyStruct body;
+  vector <file_part> parts;
+
+  if(foreground) 
+    cout << "   put_multipart_headers[path=" << path << "]" << endl;
+
+  s3_realpath = get_realpath(path);
+  resource = urlEncode(service_path + bucket + s3_realpath);
+  url = host + resource;
+
+  body.text = (char *)malloc(1);
+  body.size = 0;
+
+  s3fs_getattr(path, &buf);
+
+  upload_id = initiate_multipart_upload(path, buf.st_size, meta);
+  if(upload_id.size() == 0)
+    return(-EIO);
+
+  off_t chunk = 0;
+  off_t bytes_written = 0;
+  off_t bytes_remaining = buf.st_size;
+  while(bytes_remaining > 0) {
+    file_part part;
+
+    if(bytes_remaining > MAX_COPY_SOURCE_SIZE)
+      chunk = MAX_COPY_SOURCE_SIZE;
+    else
+      chunk = bytes_remaining - 1;
+
+    stringstream ss;
+    ss << "bytes=" << bytes_written << "-" << (bytes_written + chunk);
+    meta["x-amz-copy-source-range"] = ss.str();
+
+    part.etag = copy_part(path, path, parts.size() + 1, upload_id, meta);
+    parts.push_back(part);
+
+    bytes_written += (chunk + 1);
+    bytes_remaining = buf.st_size - bytes_written;
+  }
+
+  result = complete_multipart_upload(path, upload_id, parts);
+  if(result != 0) {
+    free(s3_realpath);
+    return -EIO;
+  }
+
+  // Update mtime in local file cache.
+  if(meta.count("x-amz-meta-mtime") > 0 && use_cache.size() > 0) {
+    struct stat st;
+    struct utimbuf n_mtime;
+    string cache_path(use_cache + "/" + bucket + path);
+
+    if((stat(cache_path.c_str(), &st)) == 0) {
+      n_mtime.modtime = strtoul(meta["x-amz-meta-mtime"].c_str(), (char **) NULL, 10);
+      n_mtime.actime = n_mtime.modtime;
+      if((utime(cache_path.c_str(), &n_mtime)) == -1) {
+        YIKES(-errno);
+      }
+    }
+  }
+
+  free(s3_realpath);
 
   return 0;
 }
@@ -1306,6 +1383,7 @@ string upload_part(const char *path, const char *source, int part_number, string
   close(fd);
   if(!md5.empty() && strstr(header.text, md5.c_str())) {
     ETag.assign(md5);
+
   } else {
     if(header.text)
       free(header.text);
@@ -1326,12 +1404,108 @@ string upload_part(const char *path, const char *source, int part_number, string
   return ETag;
 }
 
+string copy_part(const char *from, const char *to, int part_number, string upload_id, headers_t meta) {
+  CURL *curl = NULL;
+  int result;
+  string url;
+  string my_url;
+  string auth;
+  string resource;
+  string raw_date;
+  string ETag;
+  char *s3_realpath;
+  struct BodyStruct body;
+  struct BodyStruct header;
+
+  // Now copy the file as the nth part
+  if(foreground) 
+    printf("copy_part [from=%s] [to=%s]\n", from, to);
+
+  s3_realpath = get_realpath(to);
+  resource = urlEncode(service_path + bucket + s3_realpath);
+  resource.append("?partNumber=");
+  resource.append(IntToStr(part_number));
+  resource.append("&uploadId=");
+  resource.append(upload_id);
+  url = host + resource;
+  my_url = prepare_url(url.c_str());
+
+  body.text = (char *)malloc(1);
+  body.size = 0; 
+  header.text = (char *)malloc(1);
+  header.size = 0; 
+
+  auto_curl_slist headers;
+  string date = get_date();
+  headers.append("Date: " + date);
+
+  string ContentType = meta["Content-Type"];
+  meta["x-amz-acl"] = default_acl;
+
+  for(headers_t::iterator iter = meta.begin(); iter != meta.end(); ++iter) {
+    string key = (*iter).first;
+    string value = (*iter).second;
+    if (key == "Content-Type")
+      headers.append(key + ":" + value);
+    if (key == "x-amz-copy-source")
+      headers.append(key + ":" + value);
+    if (key == "x-amz-copy-source-range")
+      headers.append(key + ":" + value);
+  }
+
+  if(use_rrs.substr(0,1) == "1")
+    headers.append("x-amz-storage-class:REDUCED_REDUNDANCY");
+
+  if(public_bucket.substr(0,1) != "1")
+    headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
+      calc_signature("PUT", ContentType, date, headers.get(), resource));
+
+  curl = create_curl_handle();
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&body);
+  curl_easy_setopt(curl, CURLOPT_HEADERDATA, (void *)&header);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, WriteMemoryCallback);
+  curl_easy_setopt(curl, CURLOPT_UPLOAD, true); // HTTP PUT
+  curl_easy_setopt(curl, CURLOPT_INFILESIZE, 0); // Content-Length
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers.get());
+  curl_easy_setopt(curl, CURLOPT_URL, my_url.c_str());
+
+  result = my_curl_easy_perform(curl, &body);
+  destroy_curl_handle(curl);
+
+  if(result != 0) {
+    if(body.text)
+      free(body.text);
+    if(header.text)
+      free(header.text);
+    free(s3_realpath);
+
+    return "";
+  }
+
+  char *start_etag;
+  char *end_etag;
+  start_etag = strstr(body.text, "ETag");
+  end_etag = strstr(body.text, "/ETag>");
+  start_etag += 11;
+  ETag.assign(start_etag, (size_t)(end_etag - start_etag - 7));
+
+  // clean up
+  if(body.text)
+    free(body.text);
+  if(header.text)
+    free(header.text);
+  free(s3_realpath);
+
+  return ETag;
+}
+
 string md5sum(int fd) {
   MD5_CTX c;
   char buf[512];
   char hexbuf[3];
   ssize_t bytes;
-  char *md5 = (char *)malloc(2 * MD5_DIGEST_LENGTH + 1);
+  char md5[2 * MD5_DIGEST_LENGTH + 1];
   unsigned char *result = (unsigned char *) malloc(MD5_DIGEST_LENGTH);
   
   memset(buf, 0, 512);
@@ -1352,7 +1526,7 @@ string md5sum(int fd) {
   free(result);
   lseek(fd, 0, 0);
 
-  return md5;
+  return string(md5);
 }
 
 static int s3fs_getattr(const char *path, struct stat *stbuf) {
@@ -1428,6 +1602,15 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
 	  } else {
 		  stbuf->st_mode |= S_IFREG;
 	  }
+	  
+	  // Check for folders that were created by original s3fs
+    if (stbuf->st_mode != S_IFDIR) {
+      char *ContentType = 0;
+      if(curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &ContentType) == 0)
+        if(ContentType)
+          stbuf->st_mode = strcmp(ContentType, "application/x-directory") == 0 ? S_IFDIR : stbuf->st_mode;
+	  }
+
 
 	  stbuf->st_blocks = stbuf->st_size / 512 + 1;
 
@@ -1781,7 +1964,7 @@ static int rename_object(const char *from, const char *to) {
   headers_t meta;
 
   if(foreground)
-    cout << "rename_object[from=" << from << "][to=" << to << "]" << endl; 
+    printf("rename_object [from=%s] [to=%s]\n", from , to);
 
   if(debug)
     syslog(LOG_DEBUG, "rename_object [from=%s] [to=%s]", from, to);
@@ -1805,9 +1988,66 @@ static int rename_object(const char *from, const char *to) {
   return result;
 }
 
+static int rename_large_object(const char *from, const char *to) {
+  int result;
+  char *s3_realpath;
+  struct stat buf;
+  headers_t meta;
+  string upload_id;
+  vector <file_part> parts;
+
+  if(foreground)
+    printf("rename_large_object [from=%s] [to=%s]\n", from , to);
+
+  if(debug)
+    syslog(LOG_DEBUG, "rename_large_object [from=%s] [to=%s]", from, to);
+
+  s3fs_getattr(from, &buf);
+  s3_realpath = get_realpath(from);
+
+  if((get_headers(from, meta) != 0))
+    return -1;
+
+  meta["Content-Type"] = lookupMimeType(to);
+  meta["x-amz-copy-source"] = urlEncode("/" + bucket + s3_realpath);
+
+  upload_id = initiate_multipart_upload(to, buf.st_size, meta);
+  if(upload_id.size() == 0)
+    return(-EIO);
+
+  off_t chunk = 0;
+  off_t bytes_written = 0;
+  off_t bytes_remaining = buf.st_size;
+  while(bytes_remaining > 0) {
+    file_part part;
+
+    if(bytes_remaining > MAX_COPY_SOURCE_SIZE)
+      chunk = MAX_COPY_SOURCE_SIZE;
+    else
+      chunk = bytes_remaining - 1;
+
+    stringstream ss;
+    ss << "bytes=" << bytes_written << "-" << (bytes_written + chunk);
+    meta["x-amz-copy-source-range"] = ss.str();
+
+    part.etag = copy_part(from, to, parts.size() + 1, upload_id, meta);
+    parts.push_back(part);
+
+    bytes_written += (chunk + 1);
+    bytes_remaining = buf.st_size - bytes_written;
+  }
+
+  result = complete_multipart_upload(to, upload_id, parts);
+  if(result != 0)
+    return -EIO;
+
+  return s3fs_unlink(from);
+}
+
+
 static int clone_directory_object(const char *from, const char *to) {
   int result;
-  mode_t mode;
+//  mode_t mode;
   headers_t meta;
 
   string from_with_slash = string(from) + "/";
@@ -2091,16 +2331,18 @@ static int s3fs_rename(const char *from, const char *to) {
   int result;
 
   if(foreground) 
-    cout << "rename[from=" << from << "][to=" << to << "]" << endl;
+    printf("s3fs_rename [from=%s] [to=%s]\n", from, to);
 
   if(debug)
-    syslog(LOG_DEBUG, "rename [from=%s] [to=%s]", from, to);
+    syslog(LOG_DEBUG, "s3fs_rename [from=%s] [to=%s]", from, to);
 
   s3fs_getattr(from, &buf);
  
-  // is a directory or a different type of file 
+  // files larger than 5GB must be modified via the multipart interface
   if(S_ISDIR(buf.st_mode))
     result = rename_directory(from, to);
+  else if(buf.st_size >= FIVE_GB)
+    result = rename_large_object(from, to);
   else
     result = rename_object(from, to);
 
@@ -2269,6 +2511,7 @@ static int s3fs_flush(const char *path, struct fuse_file_info *fi) {
 
       if((stat(cache_path.c_str(), &st)) == 0) {
         n_mtime.modtime = strtoul(meta["x-amz-meta-mtime"].c_str(), (char **) NULL, 10);
+        n_mtime.actime = n_mtime.modtime;
         if((utime(cache_path.c_str(), &n_mtime)) == -1) {
           YIKES(-errno);
         }
@@ -2429,14 +2672,20 @@ static int s3fs_readdir(
 
   // Start making requests.
   int still_running = 0;
-  curlm_code = curl_multi_perform(mh, &still_running);
+  do {
+    curlm_code = curl_multi_perform(mh, &still_running);
+  } while(curlm_code == CURLM_CALL_MULTI_PERFORM);
+
   if(curlm_code != CURLM_OK) {
     syslog(LOG_ERR, "readdir: curl_multi_perform code: %d msg: %s", 
         curlm_code, curl_multi_strerror(curlm_code));
   }
 
   while(still_running) {
-    curlm_code = curl_multi_perform(mh, &still_running);
+    do {
+      curlm_code = curl_multi_perform(mh, &still_running);
+    } while(curlm_code == CURLM_CALL_MULTI_PERFORM);
+
     if(curlm_code != CURLM_OK) {
       syslog(LOG_ERR, "s3fs_readdir: curl_multi_perform code: %d msg: %s", 
           curlm_code, curl_multi_strerror(curlm_code));
@@ -2844,7 +3093,7 @@ static unsigned long id_function(void) {
 }
 
 static void* s3fs_init(struct fuse_conn_info *conn) {
-  syslog(LOG_INFO, "init $Rev: 355 $");
+  syslog(LOG_INFO, "init $Rev: 367 $");
   // openssl
   mutex_buf = static_cast<pthread_mutex_t*>(malloc(CRYPTO_num_locks() * sizeof(pthread_mutex_t)));
   for (int i = 0; i < CRYPTO_num_locks(); i++)
@@ -3506,6 +3755,8 @@ static int my_fuse_opt_proc(void *data, const char *arg, int key, struct fuse_ar
         exit(EXIT_FAILURE);
       }
     }
+
+    closedir(dp);
   }
 
   if (key == FUSE_OPT_KEY_OPT) {
@@ -3637,6 +3888,7 @@ static int my_fuse_opt_proc(void *data, const char *arg, int key, struct fuse_ar
 
 int main(int argc, char *argv[]) {
   int ch;
+  int fuse_res;
   int option_index = 0; 
 
   static const struct option long_opts[] = {
@@ -3816,5 +4068,8 @@ int main(int argc, char *argv[]) {
   s3fs_oper.create = s3fs_create;
 
   // now passing things off to fuse, fuse will finish evaluating the command line args
-  return fuse_main(custom_args.argc, custom_args.argv, &s3fs_oper, NULL);
+  fuse_res = fuse_main(custom_args.argc, custom_args.argv, &s3fs_oper, NULL);
+  fuse_opt_free_args(&custom_args);
+
+  return fuse_res;
 }

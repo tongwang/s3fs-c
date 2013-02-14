@@ -4,6 +4,8 @@
 #define FUSE_USE_VERSION 26
 #define MULTIPART_SIZE 10485760 // 10MB
 #define MAX_REQUESTS 100        // max number of concurrent HTTP requests
+#define MAX_COPY_SOURCE_SIZE  524288000 // 500MB
+#define FIVE_GB 5368709120LL
 
 #include <map>
 #include <string>
@@ -86,6 +88,7 @@ static struct fuse_operations s3fs_oper;
 std::string lookupMimeType(std::string);
 std::string initiate_multipart_upload(const char *path, off_t size, headers_t meta);
 std::string upload_part(const char *path, const char *source, int part_number, std::string upload_id);
+std::string copy_part(const char *from, const char *to, int part_number, std::string upload_id, headers_t meta);
 static int complete_multipart_upload(const char *path, std::string upload_id, std::vector <file_part> parts);
 std::string md5sum(int fd);
 char *get_realpath(const char *path);
@@ -103,6 +106,9 @@ static const char *get_next_marker(const char *xml);
 static char *get_object_name(xmlDocPtr doc, xmlNodePtr node);
 static char *get_string(xmlDocPtr doc, xmlNodePtr node);
 static long get_time(xmlDocPtr doc, xmlNodePtr node);
+
+static int put_headers(const char *path, headers_t meta);
+static int put_multipart_headers(const char *path, headers_t meta);
 
 static int s3fs_getattr(const char *path, struct stat *stbuf);
 static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_entity);
@@ -129,7 +135,7 @@ static int s3fs_readdir(
     const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
 static int s3fs_access(const char *path, int mask);
 static int s3fs_utimens(const char *path, const struct timespec ts[2]);
-static int remote_mountpath_exists(const char *path);
+//static int remote_mountpath_exists(const char *path);
 static void* s3fs_init(struct fuse_conn_info *conn);
 static void s3fs_destroy(void*);
 

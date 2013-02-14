@@ -83,7 +83,7 @@ CXX = g++
 CXXDEPMODE = depmode=gcc3
 CXXFLAGS = -g -O2 -Wall -D_FILE_OFFSET_BITS=64
 CYGPATH_W = echo
-DEFS = -DPACKAGE_NAME=\"s3fs\" -DPACKAGE_TARNAME=\"s3fs\" -DPACKAGE_VERSION=\"1.59\" -DPACKAGE_STRING=\"s3fs\ 1.59\" -DPACKAGE_BUGREPORT=\"\" -DPACKAGE_URL=\"\" -DPACKAGE=\"s3fs\" -DVERSION=\"1.59\"
+DEFS = -DPACKAGE_NAME=\"s3fs\" -DPACKAGE_TARNAME=\"s3fs\" -DPACKAGE_VERSION=\"1.61\" -DPACKAGE_STRING=\"s3fs\ 1.61\" -DPACKAGE_BUGREPORT=\"\" -DPACKAGE_URL=\"\" -DPACKAGE=\"s3fs\" -DVERSION=\"1.61\"
 DEPDIR = .deps
 DEPS_CFLAGS = -D_FILE_OFFSET_BITS=64 -I/usr/include/fuse -I/usr/include/libxml2  
 DEPS_LIBS = -pthread -lfuse -lrt -ldl -lcurl -lxml2 -lcrypto  
@@ -106,10 +106,10 @@ OBJEXT = o
 PACKAGE = s3fs
 PACKAGE_BUGREPORT = 
 PACKAGE_NAME = s3fs
-PACKAGE_STRING = s3fs 1.59
+PACKAGE_STRING = s3fs 1.61
 PACKAGE_TARNAME = s3fs
 PACKAGE_URL = 
-PACKAGE_VERSION = 1.59
+PACKAGE_VERSION = 1.61
 PATH_SEPARATOR = :
 PKG_CONFIG = /usr/bin/pkg-config
 PKG_CONFIG_LIBDIR = 
@@ -117,7 +117,7 @@ PKG_CONFIG_PATH =
 SET_MAKE = 
 SHELL = /bin/bash
 STRIP = 
-VERSION = 1.59
+VERSION = 1.61
 abs_builddir = /home/ben/code/s3fs/trunk/doc
 abs_srcdir = /home/ben/code/s3fs/trunk/doc
 abs_top_builddir = /home/ben/code/s3fs/trunk

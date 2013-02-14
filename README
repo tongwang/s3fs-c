@@ -2,7 +2,7 @@ S3FS-C
 
 S3FS-C is a FUSE (File System in User Space) based file system backed by Amazon S3 buckets. Once mounted, a S3 bucket can be used just like it was a local file system. 
 
-This project was forked from S3FS (http://code.google.com/p/s3fs/) release 1.59 and being rewritten to be compatible with other S3 clients such as s3cmd, AWS Management Console, etc. Some major differences between S3FS-C and S3FS include:
+This project was forked from S3FS (http://code.google.com/p/s3fs/) release 1.59 (updated to 1.61) and being rewritten to be compatible with other S3 clients such as s3cmd, AWS Management Console, etc. Some major differences between S3FS-C and S3FS include:
 
 * S3FS-C supports folder objects created by AWS Management Console. AWS management Console's folder is a zero-byte object with key that ends with a slash, i.e. "folder_name/". S3FS however uses a different folder scheme: folder is a zero-byte object with it matadata Content-Type set to application/x-directory. 
 * S3FS-C also supports implicit (virtual) folders, folders that do not have any S3 objects to represent them, but are implied by keys of other S3 objects. For example key "abc/def.txt" implies a folder called "abc". That makes S3FS-C compatible with many S3 clients such as s3cmd.

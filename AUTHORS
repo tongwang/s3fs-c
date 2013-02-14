@@ -14,3 +14,10 @@ Converted the project to be autotools-based.
 
 Rewrite and make it compatible with other tools (s3cmd, AWS Management Console, etc). Supports explicit folder objects (key names end with /) and implicit folders. It is no longer compatible with the original s3fs.
 
+5. memorycraft <memorycraft@gmail.com>
+
+Merge s3fs-1.61 into s3fs-c()1.59.
+
+6. lightpriest <or.cohen007@gmail.com>
+
+Added compatibility for folders that were created by original s3fs (Content-Type: application/x-directory)
