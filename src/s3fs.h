@@ -42,6 +42,7 @@ static std::string mountpoint;
 std::string program_name;
 static std::string AWSAccessKeyId;
 static std::string AWSSecretAccessKey;
+static std::string AWSAuthToken;
 static mode_t root_mode = 0;
 static std::string passwd_file = "";
 static bool utility_mode = 0;

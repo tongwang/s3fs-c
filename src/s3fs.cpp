@@ -3480,6 +3480,57 @@ static void read_passwd_file (void) {
   return;
 }
 
+struct MemoryStruct {
+  char *memory;
+  size_t size;
+};
+
+static size_t curlReadHandler(void *contents, size_t size, size_t nmemb, void *userp)
+{
+  size_t realsize = size * nmemb;
+  struct MemoryStruct *mem = (struct MemoryStruct *)userp;
+
+  mem->memory = (char *)realloc(mem->memory, mem->size + realsize + 1);
+  if(mem->memory == NULL) {
+    printf("not enough memory (realloc returned NULL)\n");
+    return 0;
+  }
+ 
+  memcpy(&(mem->memory[mem->size-1]), contents, realsize);
+  mem->size += realsize;
+  mem->memory[mem->size] = 0;
+ 
+  return realsize;
+}
+
+char *readCredentials(char *role)
+{
+  CURL *curl;
+  CURLcode res;
+  static char url[128];
+
+  struct MemoryStruct chunk;
+  if (!(chunk.memory = (char *)malloc(1)))
+    return NULL;
+  chunk.size   = 1;
+
+  sprintf(url, "http://169.254.169.254/latest/meta-data/iam/security-credentials/%s", role);
+  curl = curl_easy_init();
+  if(curl) {
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlReadHandler);
+   
+    if(res = curl_easy_perform(curl)) {
+      fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+      chunk.memory = NULL;
+    }
+    curl_easy_cleanup(curl);
+    return chunk.memory;
+  }
+  return NULL;
+}
+
 /////////////////////////////////////////////////////////////
 // get_access_keys
 //
@@ -3494,6 +3545,19 @@ static void read_passwd_file (void) {
 // 3 - from environment variables
 // 4 - from the users ~/.passwd-s3fs
 // 5 - from /etc/passwd-s3fs
+// 6 - FCC
+//
+//[ec2-user@ip-10-202-185-59 src]$ GET http://169.254.169.254/latest/meta-data/iam/security-credentials/s3fs
+// {
+//   "Code" : "Success",
+//   "LastUpdated" : "2013-03-10T06:13:03Z",
+//   "Type" : "AWS-HMAC",
+//   "AccessKeyId" : "ASIAIMNPB336YSJ5G4TQ",
+//   "SecretAccessKey" : "qgx2YuN71yA52/jaz+VHM8fboY+Ex/C4+iQHBXBb",
+//   "Token" : "AQoDYXdzED8aoAKXvU/IJnHu6XE//4ha4516yKhMxJE7M/JmHAQEnl6Fzdnk1PA3qYP0+P6/VRIPfGjGL4o9DynS13oqiUTp1FYPvHbmugzUrfJIyMnxhz8pEK7LJfgvCC9nDDLV7tQpr7smO9/C0kbZpOjkz9HfWK6QcDHLgHqZ6sOF1Yw2DfdP5Rzer2ecZK1Qtn/lVUzDFy5ulRDMLfn2iL0hOaZHs67id6Zc7KqBC7CH+sCKQAmzN2JHi2YgIEzpXGmW9t6ALjfGJgeW97FdViwJSwLqIb3vZF8tI7BWjMneifzVkhUbgudwK4HKOYk7y9W7t8nMjwFnkCM7HxrBtm6BbmNEI1FOh9lt2xKyOVFsX8Ay4/hK6VBJ5UMrETRG0D8V5Ejyhk0g98jwiQU=",
+//   "Expiration" : "2013-03-10T12:38:56Z"
+// }
+//
 /////////////////////////////////////////////////////////////
 static void get_access_keys (void) {
 
@@ -3586,6 +3650,35 @@ static void get_access_keys (void) {
     read_passwd_file();
     return;
   }
+
+
+  // 6 - from the system default location - FCC
+  char *meta_data = readCredentials("s3fs");
+  printf("============= 6 ================\n");
+  printf("%s\n", meta_data);
+  printf("============= 6 ================\n");
+  
+  char *ptr = NULL;
+  char *pch = (char *)strtok_r(meta_data, "\n", &ptr);
+  while (pch != NULL) {
+    if (char *p1=strstr(pch, "AccessKeyId\" : \"")) {
+      char *p2 = strchr(p1+16, '"');
+      *p2 = (char)0;
+      AWSAccessKeyId.assign(p1+16);
+    }
+    else if (char *p1=strstr(pch, "SecretAccessKey\" : \"")) {
+      char *p2 = strchr(p1+21, '"');
+      *p2 = (char)0;
+      AWSSecretAccessKey.assign(p1+21);
+    }
+    else if (char *p1=strstr(pch, "Token\" : \"")) {
+      char *p2 = strchr(p1+10, '"');
+      *p2 = (char)0;
+      AWSAuthToken.Assign(p1+10);
+    }
+    pch = strtok_r(NULL, "\n", &ptr);
+  }
+
   
   fprintf(stderr, "%s: could not determine how to establish security credentials\n",
            program_name.c_str());
