@@ -26,6 +26,13 @@
   return result; \
 }
 
+#define CREDENTIALS_URL "http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+
+struct MemoryStruct {
+  char *memory;
+  size_t size;
+};
+
 long connect_timeout = 10;
 time_t readwrite_timeout = 30;
 

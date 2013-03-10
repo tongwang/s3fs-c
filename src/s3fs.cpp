@@ -45,6 +45,7 @@
 #include <vector>
 #include <algorithm>
 #include <string>
+#include <sstream>
 
 #include "s3fs.h"
 #include "curl.h"
@@ -3480,11 +3481,6 @@ static void read_passwd_file (void) {
   return;
 }
 
-struct MemoryStruct {
-  char *memory;
-  size_t size;
-};
-
 static size_t curlReadHandler(void *contents, size_t size, size_t nmemb, void *userp)
 {
   size_t realsize = size * nmemb;
@@ -3503,32 +3499,47 @@ static size_t curlReadHandler(void *contents, size_t size, size_t nmemb, void *u
   return realsize;
 }
 
-char *readCredentials(char *role)
+std::string readCredentials(char *role)
 {
   CURL *curl;
   CURLcode res;
-  static char url[128];
+  std::string credentials;
 
   struct MemoryStruct chunk;
-  if (!(chunk.memory = (char *)malloc(1)))
-    return NULL;
-  chunk.size   = 1;
+  if (!(chunk.memory = (char *)malloc(1))) {
+    cerr << "malloc(1) in readCredentials() failed - not good!\n";
+    return credentials;
+  }
+  chunk.size = 1;
 
-  sprintf(url, "http://169.254.169.254/latest/meta-data/iam/security-credentials/%s", role);
+  std::string url(CREDENTIALS_URL);
+  url += role;
   curl = curl_easy_init();
-  if(curl) {
-    curl_easy_setopt(curl, CURLOPT_URL, url);
+  if (curl) {
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlReadHandler);
    
-    if(res = curl_easy_perform(curl)) {
+    if (res = curl_easy_perform(curl))
       fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-      chunk.memory = NULL;
-    }
+    else
+      credentials = std::string(chunk.memory);
     curl_easy_cleanup(curl);
-    return chunk.memory;
   }
-  return NULL;
+  return credentials;
+}
+
+std::string parse_line(std::string buffer, char *look_for)
+{
+  std::string to_find(look_for);
+  std::string found;
+  size_t pos1 = buffer.find(to_find);
+  if (pos1 != string::npos) {
+    size_t n = to_find.length();
+    size_t pos2 = buffer.find("\"", pos1+n);
+    found = buffer.substr(pos1+n, pos2-pos1-n);
+  }
+  return found;
 }
 
 /////////////////////////////////////////////////////////////
@@ -3545,7 +3556,7 @@ char *readCredentials(char *role)
 // 3 - from environment variables
 // 4 - from the users ~/.passwd-s3fs
 // 5 - from /etc/passwd-s3fs
-// 6 - FCC
+// 6 - from the instance metadata
 //
 //[ec2-user@ip-10-202-185-59 src]$ GET http://169.254.169.254/latest/meta-data/iam/security-credentials/s3fs
 // {
@@ -3653,33 +3664,29 @@ static void get_access_keys (void) {
 
 
   // 6 - from the system default location - FCC
-  char *meta_data = readCredentials("s3fs");
-  printf("============= 6 ================\n");
-  printf("%s\n", meta_data);
-  printf("============= 6 ================\n");
-  
-  char *ptr = NULL;
-  char *pch = (char *)strtok_r(meta_data, "\n", &ptr);
-  while (pch != NULL) {
-    if (char *p1=strstr(pch, "AccessKeyId\" : \"")) {
-      char *p2 = strchr(p1+16, '"');
-      *p2 = (char)0;
-      AWSAccessKeyId.assign(p1+16);
+  std::string credentials = readCredentials("s3fs");
+  std::istringstream credentials_stream(credentials);
+  std::string line;
+  while(getline(credentials_stream, line, '\n')) {
+    std::string found = parse_line(line, "AccessKeyId\" : \"");
+    if (found.length() > 0) {
+        cout << found; cout << "\n";
     }
-    else if (char *p1=strstr(pch, "SecretAccessKey\" : \"")) {
-      char *p2 = strchr(p1+21, '"');
-      *p2 = (char)0;
-      AWSSecretAccessKey.assign(p1+21);
+    found = parse_line(line, "SecretAccessKey\" : \"");
+    if (found.length() > 0) {
+        cout << found; cout << "\n";
     }
-    else if (char *p1=strstr(pch, "Token\" : \"")) {
-      char *p2 = strchr(p1+10, '"');
-      *p2 = (char)0;
-      AWSAuthToken.Assign(p1+10);
+    found = parse_line(line, "Token\" : \"");
+    if (found.length() > 0) {
+        cout << found; cout << "\n";
     }
-    pch = strtok_r(NULL, "\n", &ptr);
+    found = parse_line(line, "Expiration\" : \"");
+    if (found.length() > 0) {
+        cout << found; cout << "\n";
+    }
   }
 
-  
+ 
   fprintf(stderr, "%s: could not determine how to establish security credentials\n",
            program_name.c_str());
   exit(EXIT_FAILURE);
