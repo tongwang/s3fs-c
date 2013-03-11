@@ -290,6 +290,8 @@ string calc_signature(
   StringToSign += content_type + "\n";
   StringToSign += date + "\n";
   int count = 0;
+
+  //headers.append("x-amz-security-token: "+AWSAccessToken.data());
   if(headers != 0) {
     do {
       if(strncmp(headers->data, "x-amz", 5) == 0) {
@@ -301,6 +303,10 @@ string calc_signature(
   }
 
   StringToSign += resource;
+
+//FCC
+//syslog(LOG_ERR, "AccessKey %s\n", AWSAccessKey.data);  
+syslog(LOG_ERR, "SecretKey %s\n", AWSSecretAccessKey.data());  
 
   const void* key = AWSSecretAccessKey.data();
   int key_len = AWSSecretAccessKey.size();
@@ -444,6 +450,7 @@ int get_headers(const char* path, headers_t& meta) {
   auto_curl_slist headers;
   string date = get_date();
   headers.append("Date: " + date);
+  headers.append("x-amz-security-token: "+AWSAccessToken.c_str());
   headers.append("Content-Type: ");
   if (public_bucket.substr(0,1) != "1") {
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
@@ -572,6 +579,7 @@ int get_local_fd(const char* path) {
     string my_url = prepare_url(url.c_str());
     headers.append("Date: " + date);
     headers.append("Content-Type: ");
+    headers.append("x-amz-security-token: "+AWSAccessToken.data());
     if(public_bucket.substr(0,1) != "1") {
       headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
         calc_signature("GET", "", date, headers.get(), resource));
@@ -665,6 +673,7 @@ static int put_headers(const char *path, headers_t meta) {
   if(use_rrs.substr(0,1) == "1")
     headers.append("x-amz-storage-class:REDUCED_REDUNDANCY");
 
+  headers.append("x-amz-security-token: "+AWSAccessToken.data());
   if(public_bucket.substr(0,1) != "1")
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("PUT", ContentType, date, headers.get(), resource));
@@ -842,6 +851,7 @@ static int put_local_fd_small_file(const char* path, headers_t meta, int fd) {
   if(use_rrs.substr(0,1) == "1")
     headers.append("x-amz-storage-class:REDUCED_REDUNDANCY");
   
+  headers.append("x-amz-security-token: "+AWSAccessToken.data());
   if(public_bucket.substr(0,1) != "1")
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("PUT", ContentType, date, headers.get(), resource));
@@ -1457,9 +1467,11 @@ string copy_part(const char *from, const char *to, int part_number, string uploa
   if(use_rrs.substr(0,1) == "1")
     headers.append("x-amz-storage-class:REDUCED_REDUNDANCY");
 
-  if(public_bucket.substr(0,1) != "1")
+  headers.append("x-amz-security-token: "+AWSAccessToken.data());
+  if(public_bucket.substr(0,1) != "1") {
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("PUT", ContentType, date, headers.get(), resource));
+  }
 
   curl = create_curl_handle();
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&body);
@@ -1574,6 +1586,7 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
   string date = get_date();
   headers.append("Date: " + date);
   headers.append("Content-Type: ");
+  headers.append("x-amz-security-token: "+AWSAccessToken.data());
   if (public_bucket.substr(0,1) != "1") {
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("HEAD", "", date, headers.get(), resource));
@@ -1762,6 +1775,7 @@ static int create_file_object(const char *path, mode_t mode) {
   // x-amz headers: (a) alphabetical order and (b) no spaces after colon
   headers.append("x-amz-acl:" + default_acl);
   headers.append("x-amz-meta-mtime:" + str(time(NULL)));
+  headers.append("x-amz-security-token: "+AWSAccessToken.data());
   if(public_bucket.substr(0,1) != "1")
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("PUT", contentType, date, headers.get(), resource));
@@ -1851,6 +1865,7 @@ static int s3fs_mkdir(const char *path, mode_t mode) {
   if (use_rrs.substr(0,1) == "1") {
     headers.append("x-amz-storage-class:REDUCED_REDUNDANCY");
   }
+  headers.append("x-amz-security-token: "+AWSAccessToken.data());
   if (public_bucket.substr(0,1) != "1") {
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("PUT", "", date, headers.get(), resource));
@@ -1904,6 +1919,7 @@ static int s3fs_unlink(const char *path) {
 
   headers.append("Date: " + date);
   headers.append("Content-Type: ");
+  headers.append("x-amz-security-token: "+AWSAccessToken.data());
   if(public_bucket.substr(0,1) != "1")
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("DELETE", "", date, headers.get(), resource));
@@ -2170,6 +2186,7 @@ static int rename_directory(const char *from, const char *to) {
       string date = get_date();
       headers.append("Date: " + date);
       headers.append("ContentType: ");
+      headers.append("x-amz-security-token: "+AWSAccessToken.data());
       if (public_bucket.substr(0,1) != "1") {
         headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
           calc_signature("GET", "", date, headers.get(), resource + "/"));
@@ -2884,6 +2901,7 @@ static int list_bucket(const char *path, struct s3_object **s3_objects) {
     string date = get_date();
     headers.append("Date: " + date);
     headers.append("ContentType: ");
+    headers.append("x-amz-security-token: "+AWSAccessToken.data());
     if(public_bucket.substr(0,1) != "1") {
       headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
         calc_signature("GET", "", date, headers.get(), resource + "/"));
@@ -3668,24 +3686,18 @@ static void get_access_keys (void) {
   std::istringstream credentials_stream(credentials);
   std::string line;
   while(getline(credentials_stream, line, '\n')) {
-    std::string found = parse_line(line, "AccessKeyId\" : \"");
-    if (found.length() > 0) {
-        cout << found; cout << "\n";
-    }
-    found = parse_line(line, "SecretAccessKey\" : \"");
-    if (found.length() > 0) {
-        cout << found; cout << "\n";
-    }
-    found = parse_line(line, "Token\" : \"");
-    if (found.length() > 0) {
-        cout << found; cout << "\n";
-    }
-    found = parse_line(line, "Expiration\" : \"");
-    if (found.length() > 0) {
-        cout << found; cout << "\n";
-    }
+    if (AWSAccessKeyId.length() == 0)
+      AWSAccessKeyId = parse_line(line, "AccessKeyId\" : \"");
+    if (AWSSecretAccessKey.length() == 0)
+      AWSSecretAccessKey = parse_line(line, "SecretAccessKey\" : \"");
+    if (AWSAccessToken.length() == 0)
+      AWSAccessToken = parse_line(line, "Token\" : \"");
   }
-
+  size_t len1 = AWSAccessKeyId.length();
+  size_t len2 = AWSSecretAccessKey.length();
+  size_t len3 = AWSAccessToken.length();
+  if (len1>0 && len2>0 && len3>0)
+    return;
  
   fprintf(stderr, "%s: could not determine how to establish security credentials\n",
            program_name.c_str());
