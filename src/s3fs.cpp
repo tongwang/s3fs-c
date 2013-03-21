@@ -291,7 +291,9 @@ string calc_signature(
   StringToSign += date + "\n";
   int count = 0;
 
-  //headers.append("x-amz-security-token: "+AWSAccessToken.data());
+std::string token = std::string("x-amz-security-token:")+AWSAccessToken;
+headers = curl_slist_append(headers,token.c_str());
+
   if(headers != 0) {
     do {
       if(strncmp(headers->data, "x-amz", 5) == 0) {
@@ -306,7 +308,10 @@ string calc_signature(
 
 //FCC
 //syslog(LOG_ERR, "AccessKey %s\n", AWSAccessKey.data);  
-syslog(LOG_ERR, "SecretKey %s\n", AWSSecretAccessKey.data());  
+cout << "SecretKey:" << AWSSecretAccessKey.data() << endl;
+cout << "-------------StringToSign-------------" << endl;
+cout << StringToSign << endl;
+cout << "--------------------------------------" << endl;
 
   const void* key = AWSSecretAccessKey.data();
   int key_len = AWSSecretAccessKey.size();
@@ -450,8 +455,8 @@ int get_headers(const char* path, headers_t& meta) {
   auto_curl_slist headers;
   string date = get_date();
   headers.append("Date: " + date);
-  headers.append("x-amz-security-token: "+AWSAccessToken.c_str());
   headers.append("Content-Type: ");
+
   if (public_bucket.substr(0,1) != "1") {
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("HEAD", "", date, headers.get(), resource));
@@ -579,7 +584,6 @@ int get_local_fd(const char* path) {
     string my_url = prepare_url(url.c_str());
     headers.append("Date: " + date);
     headers.append("Content-Type: ");
-    headers.append("x-amz-security-token: "+AWSAccessToken.data());
     if(public_bucket.substr(0,1) != "1") {
       headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
         calc_signature("GET", "", date, headers.get(), resource));
@@ -673,7 +677,6 @@ static int put_headers(const char *path, headers_t meta) {
   if(use_rrs.substr(0,1) == "1")
     headers.append("x-amz-storage-class:REDUCED_REDUNDANCY");
 
-  headers.append("x-amz-security-token: "+AWSAccessToken.data());
   if(public_bucket.substr(0,1) != "1")
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("PUT", ContentType, date, headers.get(), resource));
@@ -851,7 +854,6 @@ static int put_local_fd_small_file(const char* path, headers_t meta, int fd) {
   if(use_rrs.substr(0,1) == "1")
     headers.append("x-amz-storage-class:REDUCED_REDUNDANCY");
   
-  headers.append("x-amz-security-token: "+AWSAccessToken.data());
   if(public_bucket.substr(0,1) != "1")
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("PUT", ContentType, date, headers.get(), resource));
@@ -1467,7 +1469,6 @@ string copy_part(const char *from, const char *to, int part_number, string uploa
   if(use_rrs.substr(0,1) == "1")
     headers.append("x-amz-storage-class:REDUCED_REDUNDANCY");
 
-  headers.append("x-amz-security-token: "+AWSAccessToken.data());
   if(public_bucket.substr(0,1) != "1") {
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("PUT", ContentType, date, headers.get(), resource));
@@ -1543,6 +1544,7 @@ string md5sum(int fd) {
 }
 
 static int s3fs_getattr(const char *path, struct stat *stbuf) {
+	cout << "s3fs_getattr" << endl;
 	return _s3fs_getattr(path, stbuf, true);
 }
 
@@ -1586,7 +1588,6 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
   string date = get_date();
   headers.append("Date: " + date);
   headers.append("Content-Type: ");
-  headers.append("x-amz-security-token: "+AWSAccessToken.data());
   if (public_bucket.substr(0,1) != "1") {
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("HEAD", "", date, headers.get(), resource));
@@ -1693,6 +1694,7 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
 }
 
 static int s3fs_readlink(const char *path, char *buf, size_t size) {
+  cout << "s3fs_readlink" << endl;
   // s3fs-c does not support symbolic links
   return 0;
 }
@@ -1775,7 +1777,6 @@ static int create_file_object(const char *path, mode_t mode) {
   // x-amz headers: (a) alphabetical order and (b) no spaces after colon
   headers.append("x-amz-acl:" + default_acl);
   headers.append("x-amz-meta-mtime:" + str(time(NULL)));
-  headers.append("x-amz-security-token: "+AWSAccessToken.data());
   if(public_bucket.substr(0,1) != "1")
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("PUT", contentType, date, headers.get(), resource));
@@ -1797,6 +1798,7 @@ static int create_file_object(const char *path, mode_t mode) {
 }
 
 static int s3fs_mknod(const char *path, mode_t mode, dev_t rdev) {
+  cout << "s3fs_mknod" << endl;
   int result;
 
   if(foreground) 
@@ -1815,6 +1817,8 @@ static int s3fs_mknod(const char *path, mode_t mode, dev_t rdev) {
 static int s3fs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
   int result;
   headers_t meta;
+
+  cout << "s3fs_create" << endl;
 
   if(foreground) 
     cout << "s3fs_create[path=" << path << "][mode=" << mode << "]" << "[flags=" << fi->flags << "]" <<  endl;
@@ -1846,6 +1850,8 @@ static int s3fs_mkdir(const char *path, mode_t mode) {
   string date = get_date();
   auto_curl_slist headers;
 
+  cout << "s3fs_mkdir" << endl;
+
   if(foreground) 
     cout << "mkdir[path=" << path << "]" << endl;
 
@@ -1865,7 +1871,6 @@ static int s3fs_mkdir(const char *path, mode_t mode) {
   if (use_rrs.substr(0,1) == "1") {
     headers.append("x-amz-storage-class:REDUCED_REDUNDANCY");
   }
-  headers.append("x-amz-security-token: "+AWSAccessToken.data());
   if (public_bucket.substr(0,1) != "1") {
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("PUT", "", date, headers.get(), resource));
@@ -1897,6 +1902,8 @@ static int s3fs_unlink(const char *path) {
   auto_curl_slist headers;
   CURL *curl = NULL;
 
+  cout << "s3fs_unlink" << endl;
+
   if(foreground) 
     cout << "unlink[path=" << path << "]" << endl;
 
@@ -1919,7 +1926,6 @@ static int s3fs_unlink(const char *path) {
 
   headers.append("Date: " + date);
   headers.append("Content-Type: ");
-  headers.append("x-amz-security-token: "+AWSAccessToken.data());
   if(public_bucket.substr(0,1) != "1")
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("DELETE", "", date, headers.get(), resource));
@@ -1947,6 +1953,8 @@ static int s3fs_rmdir(const char *path) {
   char *s3_realpath;
   struct BodyStruct body;
 
+  cout << "s3fs_rmdir" << endl;
+
   if(foreground) 
     cout << "rmdir[path=" << path << "]" << endl;
 
@@ -1970,6 +1978,7 @@ static int s3fs_rmdir(const char *path) {
 }
 
 static int s3fs_symlink(const char *from, const char *to) {
+  cout << "s3fs_symlink" << endl;
 	if(foreground)
 	    cout << "symlink[from=" << from << "][to=" << to << "]" << endl;
 	  return -EPERM;
@@ -2186,7 +2195,6 @@ static int rename_directory(const char *from, const char *to) {
       string date = get_date();
       headers.append("Date: " + date);
       headers.append("ContentType: ");
-      headers.append("x-amz-security-token: "+AWSAccessToken.data());
       if (public_bucket.substr(0,1) != "1") {
         headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
           calc_signature("GET", "", date, headers.get(), resource + "/"));
@@ -2620,12 +2628,17 @@ static int s3fs_readdir(
   struct s3_object *s3_objects_ptr = NULL;
   auto_head curl_map;
 
-  if(foreground) 
-    cout << "readdir[path=" << path << "]" << endl;
+  cout << "s3fs_readdir" << endl;
 
+  if(foreground)  {
+    cout << "readdir[path=" << path << "]" << endl;
+  }
+
+  cout << "OK1: we are going to do something real" << endl;
   // get a list of all the objects
   if((list_bucket(path, &s3_objects)) != 0)
     return -EIO;
+  cout << "OK2: we are going to do something real" << endl;
 
   if(s3_objects == NULL)
     return 0;
@@ -2666,6 +2679,8 @@ static int s3fs_readdir(
 
     	continue;
     }
+
+    cout << "OK7: we are going to do something real" << endl;
 
     // it is a directory, and not cached, prepare a call to get_headers
     // directory object ends with "/"
@@ -2888,6 +2903,7 @@ static int list_bucket(const char *path, struct s3_object **s3_objects) {
 
   query += "&max-keys=1000";
 
+  cout << "LIST BUCKET1 !!!" << endl;
   // while where is more...
   while(truncated) {
     string url = host + resource + "?" + query;
@@ -2901,7 +2917,6 @@ static int list_bucket(const char *path, struct s3_object **s3_objects) {
     string date = get_date();
     headers.append("Date: " + date);
     headers.append("ContentType: ");
-    headers.append("x-amz-security-token: "+AWSAccessToken.data());
     if(public_bucket.substr(0,1) != "1") {
       headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
         calc_signature("GET", "", date, headers.get(), resource + "/"));
@@ -2913,7 +2928,9 @@ static int list_bucket(const char *path, struct s3_object **s3_objects) {
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers.get());
 
+cout << "LIST BUCKET2 !!!" << endl;
     result = my_curl_easy_perform(curl, &body);
+cout << "LIST BUCKET3 !!!" << endl;
 
     destroy_curl_handle(curl);
 
@@ -2927,8 +2944,11 @@ static int list_bucket(const char *path, struct s3_object **s3_objects) {
     }
 
     // process response body and extract objects and common prefixes into s3 object list
+cout << "LIST BUCKET4 !!!" << endl;
+cout << body.text << endl;
     if((append_objects_from_xml(body.text, s3_objects)) != 0)
       return -1;
+cout << "LIST BUCKET5 !!!" << endl;
 
     truncated = is_truncated(body.text);
     if(truncated)
@@ -2951,10 +2971,12 @@ static int append_objects_from_xml(const char *xml, struct s3_object **s3_object
   xmlDocPtr doc;
   xmlXPathContextPtr ctx;
 
+cout << "append_objects_from_xml1" << endl;
 
   doc = xmlReadMemory(xml, strlen(xml), "", NULL, 0);
   if(doc == NULL)
     return -1;
+cout << "append_objects_from_xml2" << endl;
 
   ctx = xmlXPathNewContext(doc);
   xmlXPathRegisterNs(ctx, (xmlChar *) "s3",
