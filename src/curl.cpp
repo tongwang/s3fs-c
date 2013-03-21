@@ -92,6 +92,7 @@ int my_curl_easy_perform(CURL* curl, BodyStruct* body, FILE* f) {
   char* ptr_url = url;
   curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL , &ptr_url);
 
+  syslog(LOG_ERR, "my_curl_easy_perform\n");
   if(debug)
     syslog(LOG_DEBUG, "connecting to URL %s", ptr_url);
 
@@ -99,10 +100,17 @@ int my_curl_easy_perform(CURL* curl, BodyStruct* body, FILE* f) {
   if(ssl_verify_hostname.substr(0,1) == "0")
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0);
 
+//x-amz- security-token
+
   if(curl_ca_bundle.size() != 0)
     curl_easy_setopt(curl, CURLOPT_CAINFO, curl_ca_bundle.c_str());
 
+//  curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
+//  curl_easy_setopt(curl, CURLOPT_HEADER, 1);
+
   long responseCode;
+
+//syslog(LOG_ERR, "Request Body Text: %s", body->text);
 
   // 1 attempt + retries...
   int t = retries + 1;
