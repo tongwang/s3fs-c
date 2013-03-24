@@ -63,6 +63,9 @@ struct s3_object {
   struct s3_object *next;
 };
 
+std::string parse_line(std::string buffer, const char *look_for);
+std::string readCredentials(const std::string role);
+
 class auto_curl_slist {
  public:
   auto_curl_slist() : slist(0) { }
@@ -255,6 +258,32 @@ void free_mvnodes(MVNODE *head) {
 
   return;
 }
+
+int get_iam_credentials()
+{
+    std::string credentials = readCredentials(iam_role);
+    std::istringstream credentials_stream(credentials);
+    std::string line;
+    while(getline(credentials_stream, line, '\n')) {
+      if (AWSAccessKeyId.length() == 0)
+        AWSAccessKeyId = parse_line(line, "AccessKeyId\" : \"");
+      if (AWSSecretAccessKey.length() == 0)
+        AWSSecretAccessKey = parse_line(line, "SecretAccessKey\" : \"");
+      if (AWSAccessToken.length() == 0)
+        AWSAccessToken = parse_line(line, "Token\" : \"");
+      if (AWSAccessTokenExpiry == 0) {
+        struct tm tm;
+        std::string expiry = parse_line(line, "Expiration\" : \"");
+        (void)strptime(expiry.c_str(), "%Y-%m-%dT%H:%M:%S%z", &tm);
+        AWSAccessTokenExpiry = mktime(&tm);
+      }
+    }
+    size_t len1 = AWSAccessKeyId.length();
+    size_t len2 = AWSSecretAccessKey.length();
+    size_t len3 = AWSAccessToken.length();
+
+    return (len1>0 && len2>0 && len3>0 && AWSAccessTokenExpiry > 0);
+}
  
 /**
  * Returns the Amazon AWS signature for the given parameters.
@@ -271,6 +300,14 @@ string calc_signature(
   int offset;
   int write_attempts = 0;
 
+  time_t now = time(NULL);
+  if (AWSAccessTokenExpiry-now < 1200) {
+    if (get_iam_credentials())
+        syslog(LOG_INFO, "IAM Role Credentials refreshed");  
+    else
+        syslog(LOG_ERR, "Failure during BIO_write, returning null String");  
+  }
+
   string Signature;
   string StringToSign;
   StringToSign += method + "\n";
@@ -279,8 +316,8 @@ string calc_signature(
   StringToSign += date + "\n";
   int count = 0;
 
-std::string token = std::string("x-amz-security-token:")+AWSAccessToken;
-headers = curl_slist_append(headers,token.c_str());
+  std::string token = std::string("x-amz-security-token:")+AWSAccessToken;
+  headers = curl_slist_append(headers,token.c_str());
 
   if(headers != 0) {
     do {
@@ -3523,6 +3560,7 @@ std::string parse_line(std::string buffer, const char *look_for)
   return found;
 }
 
+
 /////////////////////////////////////////////////////////////
 // get_access_keys
 //
@@ -3644,22 +3682,9 @@ static void get_access_keys (void) {
   }
 
   // 6 - from the system default location - FCC
+  AWSAccessTokenExpiry = 0;
   if (iam_role.length() > 0) {
-    std::string credentials = readCredentials(iam_role);
-    std::istringstream credentials_stream(credentials);
-    std::string line;
-    while(getline(credentials_stream, line, '\n')) {
-      if (AWSAccessKeyId.length() == 0)
-        AWSAccessKeyId = parse_line(line, "AccessKeyId\" : \"");
-      if (AWSSecretAccessKey.length() == 0)
-        AWSSecretAccessKey = parse_line(line, "SecretAccessKey\" : \"");
-      if (AWSAccessToken.length() == 0)
-        AWSAccessToken = parse_line(line, "Token\" : \"");
-    }
-    size_t len1 = AWSAccessKeyId.length();
-    size_t len2 = AWSSecretAccessKey.length();
-    size_t len3 = AWSAccessToken.length();
-    if (len1>0 && len2>0 && len3>0)
+    if (get_iam_credentials())
       return;
   }
  
