@@ -158,18 +158,6 @@ static int insert_object(const char *name, bool is_common_prefix, long last_modi
   return 0;
 }
 
-static unsigned int count_object_list(struct s3_object *list) {
-  unsigned int count = 0;
-  struct s3_object *head = list;
-
-  while(head != NULL) {
-    count++;
-    head = head->next;
-  }
-
-  return count;
-}
-
 static int free_object(struct s3_object *object) {
   free(object->name);
   free(object);
@@ -305,13 +293,6 @@ headers = curl_slist_append(headers,token.c_str());
   }
 
   StringToSign += resource;
-
-//FCC
-//syslog(LOG_ERR, "AccessKey %s\n", AWSAccessKey.data);  
-cout << "SecretKey:" << AWSSecretAccessKey.data() << endl;
-cout << "-------------StringToSign-------------" << endl;
-cout << StringToSign << endl;
-cout << "--------------------------------------" << endl;
 
   const void* key = AWSSecretAccessKey.data();
   int key_len = AWSSecretAccessKey.size();
@@ -732,7 +713,6 @@ static int put_multipart_headers(const char *path, headers_t meta) {
   string resource;
   string upload_id;
   struct stat buf;
-  struct BodyStruct body;
   vector <file_part> parts;
 
   if(foreground) 
@@ -741,9 +721,6 @@ static int put_multipart_headers(const char *path, headers_t meta) {
   s3_realpath = get_realpath(path);
   resource = urlEncode(service_path + bucket + s3_realpath);
   url = host + resource;
-
-  body.text = (char *)malloc(1);
-  body.size = 0;
 
   s3fs_getattr(path, &buf);
 
@@ -1544,7 +1521,6 @@ string md5sum(int fd) {
 }
 
 static int s3fs_getattr(const char *path, struct stat *stbuf) {
-	cout << "s3fs_getattr" << endl;
 	return _s3fs_getattr(path, stbuf, true);
 }
 
@@ -1694,7 +1670,6 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
 }
 
 static int s3fs_readlink(const char *path, char *buf, size_t size) {
-  cout << "s3fs_readlink" << endl;
   // s3fs-c does not support symbolic links
   return 0;
 }
@@ -1798,7 +1773,6 @@ static int create_file_object(const char *path, mode_t mode) {
 }
 
 static int s3fs_mknod(const char *path, mode_t mode, dev_t rdev) {
-  cout << "s3fs_mknod" << endl;
   int result;
 
   if(foreground) 
@@ -1817,8 +1791,6 @@ static int s3fs_mknod(const char *path, mode_t mode, dev_t rdev) {
 static int s3fs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
   int result;
   headers_t meta;
-
-  cout << "s3fs_create" << endl;
 
   if(foreground) 
     cout << "s3fs_create[path=" << path << "][mode=" << mode << "]" << "[flags=" << fi->flags << "]" <<  endl;
@@ -1849,8 +1821,6 @@ static int s3fs_mkdir(const char *path, mode_t mode) {
   string resource;
   string date = get_date();
   auto_curl_slist headers;
-
-  cout << "s3fs_mkdir" << endl;
 
   if(foreground) 
     cout << "mkdir[path=" << path << "]" << endl;
@@ -1902,8 +1872,6 @@ static int s3fs_unlink(const char *path) {
   auto_curl_slist headers;
   CURL *curl = NULL;
 
-  cout << "s3fs_unlink" << endl;
-
   if(foreground) 
     cout << "unlink[path=" << path << "]" << endl;
 
@@ -1950,17 +1918,9 @@ static int s3fs_unlink(const char *path) {
 }
 
 static int s3fs_rmdir(const char *path) {
-  char *s3_realpath;
-  struct BodyStruct body;
-
-  cout << "s3fs_rmdir" << endl;
 
   if(foreground) 
     cout << "rmdir[path=" << path << "]" << endl;
-
-  s3_realpath = get_realpath(path);
-  body.text = (char *)malloc(1);
-  body.size = 0;
 
   // need to check if the directory is empty
   struct s3_object *s3_objects    = NULL;
@@ -1978,7 +1938,6 @@ static int s3fs_rmdir(const char *path) {
 }
 
 static int s3fs_symlink(const char *from, const char *to) {
-  cout << "s3fs_symlink" << endl;
 	if(foreground)
 	    cout << "symlink[from=" << from << "][to=" << to << "]" << endl;
 	  return -EPERM;
@@ -2622,28 +2581,21 @@ static int s3fs_readdir(
   CURLMsg *msg;
   CURLMcode curlm_code;
   int n_reqs;
-  int n_objects;
   int remaining_messages;
   struct s3_object *s3_objects    = NULL;
   struct s3_object *s3_objects_ptr = NULL;
   auto_head curl_map;
 
-  cout << "s3fs_readdir" << endl;
-
   if(foreground)  {
     cout << "readdir[path=" << path << "]" << endl;
   }
 
-  cout << "OK1: we are going to do something real" << endl;
   // get a list of all the objects
   if((list_bucket(path, &s3_objects)) != 0)
     return -EIO;
-  cout << "OK2: we are going to do something real" << endl;
 
   if(s3_objects == NULL)
     return 0;
-
-  n_objects = count_object_list(s3_objects);
 
   // populate fuse buffer
   s3_objects_ptr = s3_objects;
@@ -2679,8 +2631,6 @@ static int s3fs_readdir(
 
     	continue;
     }
-
-    cout << "OK7: we are going to do something real" << endl;
 
     // it is a directory, and not cached, prepare a call to get_headers
     // directory object ends with "/"
@@ -2903,7 +2853,6 @@ static int list_bucket(const char *path, struct s3_object **s3_objects) {
 
   query += "&max-keys=1000";
 
-  cout << "LIST BUCKET1 !!!" << endl;
   // while where is more...
   while(truncated) {
     string url = host + resource + "?" + query;
@@ -2928,9 +2877,7 @@ static int list_bucket(const char *path, struct s3_object **s3_objects) {
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers.get());
 
-cout << "LIST BUCKET2 !!!" << endl;
     result = my_curl_easy_perform(curl, &body);
-cout << "LIST BUCKET3 !!!" << endl;
 
     destroy_curl_handle(curl);
 
@@ -2944,11 +2891,8 @@ cout << "LIST BUCKET3 !!!" << endl;
     }
 
     // process response body and extract objects and common prefixes into s3 object list
-cout << "LIST BUCKET4 !!!" << endl;
-cout << body.text << endl;
     if((append_objects_from_xml(body.text, s3_objects)) != 0)
       return -1;
-cout << "LIST BUCKET5 !!!" << endl;
 
     truncated = is_truncated(body.text);
     if(truncated)
@@ -2971,12 +2915,9 @@ static int append_objects_from_xml(const char *xml, struct s3_object **s3_object
   xmlDocPtr doc;
   xmlXPathContextPtr ctx;
 
-cout << "append_objects_from_xml1" << endl;
-
   doc = xmlReadMemory(xml, strlen(xml), "", NULL, 0);
   if(doc == NULL)
     return -1;
-cout << "append_objects_from_xml2" << endl;
 
   ctx = xmlXPathNewContext(doc);
   xmlXPathRegisterNs(ctx, (xmlChar *) "s3",
@@ -3539,7 +3480,7 @@ static size_t curlReadHandler(void *contents, size_t size, size_t nmemb, void *u
   return realsize;
 }
 
-std::string readCredentials(char *role)
+std::string readCredentials(const std::string role)
 {
   CURL *curl;
   CURLcode res;
@@ -3560,7 +3501,7 @@ std::string readCredentials(char *role)
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlReadHandler);
    
-    if (res = curl_easy_perform(curl))
+    if ((res = curl_easy_perform(curl)))
       fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
     else
       credentials = std::string(chunk.memory);
@@ -3569,7 +3510,7 @@ std::string readCredentials(char *role)
   return credentials;
 }
 
-std::string parse_line(std::string buffer, char *look_for)
+std::string parse_line(std::string buffer, const char *look_for)
 {
   std::string to_find(look_for);
   std::string found;
@@ -3702,24 +3643,25 @@ static void get_access_keys (void) {
     return;
   }
 
-
   // 6 - from the system default location - FCC
-  std::string credentials = readCredentials("s3fs");
-  std::istringstream credentials_stream(credentials);
-  std::string line;
-  while(getline(credentials_stream, line, '\n')) {
-    if (AWSAccessKeyId.length() == 0)
-      AWSAccessKeyId = parse_line(line, "AccessKeyId\" : \"");
-    if (AWSSecretAccessKey.length() == 0)
-      AWSSecretAccessKey = parse_line(line, "SecretAccessKey\" : \"");
-    if (AWSAccessToken.length() == 0)
-      AWSAccessToken = parse_line(line, "Token\" : \"");
+  if (iam_role.length() > 0) {
+    std::string credentials = readCredentials(iam_role);
+    std::istringstream credentials_stream(credentials);
+    std::string line;
+    while(getline(credentials_stream, line, '\n')) {
+      if (AWSAccessKeyId.length() == 0)
+        AWSAccessKeyId = parse_line(line, "AccessKeyId\" : \"");
+      if (AWSSecretAccessKey.length() == 0)
+        AWSSecretAccessKey = parse_line(line, "SecretAccessKey\" : \"");
+      if (AWSAccessToken.length() == 0)
+        AWSAccessToken = parse_line(line, "Token\" : \"");
+    }
+    size_t len1 = AWSAccessKeyId.length();
+    size_t len2 = AWSSecretAccessKey.length();
+    size_t len3 = AWSAccessToken.length();
+    if (len1>0 && len2>0 && len3>0)
+      return;
   }
-  size_t len1 = AWSAccessKeyId.length();
-  size_t len2 = AWSSecretAccessKey.length();
-  size_t len3 = AWSAccessToken.length();
-  if (len1>0 && len2>0 && len3>0)
-    return;
  
   fprintf(stderr, "%s: could not determine how to establish security credentials\n",
            program_name.c_str());
@@ -3957,6 +3899,11 @@ static int my_fuse_opt_proc(void *data, const char *arg, int key, struct fuse_ar
       service_path = strchr(arg, '=') + 1;
       return 0;
     }
+    if (strstr(arg, "iam_role=") != 0) {
+      const char *ptr = strchr(arg, '=') + 1;
+      iam_role = std::string(ptr);
+      return 0;
+    }
     if (strstr(arg, "connect_timeout=") != 0) {
       connect_timeout = strtol(strchr(arg, '=') + 1, 0, 10);
       return 0;
@@ -3981,6 +3928,10 @@ static int my_fuse_opt_proc(void *data, const char *arg, int key, struct fuse_ar
          found = host.find_last_of('/');
          length = host.length();
       }
+      return 0;
+    }
+
+    if ( (strcmp(arg, "-r") == 0) || (strcmp(arg, "--role") == 0) ) {
       return 0;
     }
 
@@ -4029,6 +3980,7 @@ int main(int argc, char *argv[]) {
     {"help",    no_argument, NULL, 'h'},
     {"version", no_argument, 0,     0},
     {"debug",   no_argument, NULL, 'd'},
+    {"role",    required_argument, 0, 'r'},
     {0, 0, 0, 0}};
 
    // get progam name - emulate basename 
@@ -4171,8 +4123,7 @@ int main(int argc, char *argv[]) {
 
   if (utility_mode) {
      printf("Utility Mode\n");
-     int result;
-     result = list_multipart_uploads();
+     (void)list_multipart_uploads();
      exit(EXIT_SUCCESS);
   }
 

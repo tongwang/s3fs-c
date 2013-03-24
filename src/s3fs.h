@@ -45,6 +45,7 @@ static std::string host = "http://s3.amazonaws.com";
 static std::string service_path = "/";
 std::string bucket = "";
 std::string mount_prefix = "";
+std::string iam_role = "";
 static std::string mountpoint;
 std::string program_name;
 static std::string AWSAccessKeyId;
@@ -102,7 +103,6 @@ std::string md5sum(int fd);
 char *get_realpath(const char *path);
 
 static int insert_object(const char *name, bool is_common_prefix, long last_modified, long size, struct s3_object **head);
-static unsigned int count_object_list(struct s3_object *list);
 static int free_object(struct s3_object *object);
 static int free_object_list(struct s3_object *head);
 
