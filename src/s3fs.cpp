@@ -52,6 +52,8 @@
 #include "cache.h"
 #include "string_util.h"
 
+#define MINUTE 60
+
 using namespace std;
 
 // a list of s3 objects
@@ -259,30 +261,74 @@ void free_mvnodes(MVNODE *head) {
   return;
 }
 
+/*
+ * Convert the Token expiry time from the instance meta-data into
+ * epoch seconds
+*/
+time_t expiry_to_epoch(std::string expiry)
+{
+    struct tm tm;
+
+    char *zone = strptime(expiry.c_str(), "%Y-%m-%dT%H:%M:%S", &tm);
+    if (zone[0] != (char)'Z') {
+        // time parsing in C is a horror!
+        syslog(LOG_ERR, "Expiry TimeZone is not 'Z' - this probably breaks things\n");  
+    }
+    char *origTZ = getenv("TZ");
+    setenv("TZ", "", 1);
+    tzset();
+    time_t expiry_t = mktime(&tm);
+    if (origTZ != NULL)
+        setenv("TZ", origTZ, 0);
+    else
+        unsetenv("TZ");
+    tzset();
+
+    return expiry_t;
+}
+
+
+/*
+ * Updates the AWS AccessKey, SecretKey and Token from
+ * the instance MetaData
+*/
 int get_iam_credentials()
 {
+    std::string line;
+    std::string newAccessKey, newSecretKey, newToken;
+    time_t newExpiry = 0;
+
     std::string credentials = readCredentials(iam_role);
     std::istringstream credentials_stream(credentials);
-    std::string line;
     while(getline(credentials_stream, line, '\n')) {
-      if (AWSAccessKeyId.length() == 0)
-        AWSAccessKeyId = parse_line(line, "AccessKeyId\" : \"");
-      if (AWSSecretAccessKey.length() == 0)
-        AWSSecretAccessKey = parse_line(line, "SecretAccessKey\" : \"");
-      if (AWSAccessToken.length() == 0)
-        AWSAccessToken = parse_line(line, "Token\" : \"");
-      if (AWSAccessTokenExpiry == 0) {
-        struct tm tm;
+      if (newAccessKey.length() == 0)
+        newAccessKey = parse_line(line, "AccessKeyId\" : \"");
+      if (newSecretKey.length() == 0)
+        newSecretKey = parse_line(line, "SecretAccessKey\" : \"");
+      if (newToken.length() == 0)
+        newToken = parse_line(line, "Token\" : \"");
+      if (newExpiry == 0) {
         std::string expiry = parse_line(line, "Expiration\" : \"");
-        (void)strptime(expiry.c_str(), "%Y-%m-%dT%H:%M:%S%z", &tm);
-        AWSAccessTokenExpiry = mktime(&tm);
+        if (expiry.length() > 0) {
+            newExpiry = expiry_to_epoch(expiry);
+        }
       }
     }
-    size_t len1 = AWSAccessKeyId.length();
-    size_t len2 = AWSSecretAccessKey.length();
-    size_t len3 = AWSAccessToken.length();
+    size_t len1 = newAccessKey.length();
+    size_t len2 = newSecretKey.length();
+    size_t len3 = newToken.length();
 
-    return (len1>0 && len2>0 && len3>0 && AWSAccessTokenExpiry > 0);
+    if (len1>0 && len2>0 && len3>0 && newExpiry > 0) {
+        AWSAccessKeyId       = newAccessKey;
+        AWSSecretAccessKey   = newSecretKey;
+        AWSAccessToken       = newToken;
+        AWSAccessTokenExpiry = newExpiry;
+        return 1;
+    }
+    else {
+        AWSAccessTokenExpiry += 20; // try again in 20 seconds
+        return 0;
+    }
 }
  
 /**
@@ -301,11 +347,13 @@ string calc_signature(
   int write_attempts = 0;
 
   time_t now = time(NULL);
-  if (AWSAccessTokenExpiry-now < 1200) {
+  if (foreground)
+    cout << "Token expires in " << AWSAccessTokenExpiry-now << " seconds" << endl;
+  if (AWSAccessTokenExpiry-now < 20*MINUTE) {
     if (get_iam_credentials())
-        syslog(LOG_INFO, "IAM Role Credentials refreshed");  
+        syslog(LOG_INFO, "got new credentials ok");
     else
-        syslog(LOG_ERR, "Failure during BIO_write, returning null String");  
+        syslog(LOG_ERR, "could not get new credentials");  
   }
 
   string Signature;
