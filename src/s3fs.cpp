@@ -3552,6 +3552,7 @@ static size_t curlReadHandler(void *contents, size_t size, size_t nmemb, void *u
   size_t realsize = size * nmemb;
   struct MemoryStruct *mem = (struct MemoryStruct *)userp;
 
+  //FCC: This is a problem memory lost on realloc faliure
   mem->memory = (char *)realloc(mem->memory, mem->size + realsize + 1);
   if(mem->memory == NULL) {
     printf("not enough memory (realloc returned NULL)\n");
@@ -3592,6 +3593,7 @@ std::string readCredentials(const std::string role)
       credentials = std::string(chunk.memory);
     curl_easy_cleanup(curl);
   }
+  free(chunk.memory);
   return credentials;
 }
 
