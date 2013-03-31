@@ -894,8 +894,10 @@ static int put_local_fd_small_file(const char* path, headers_t meta, int fd) {
   curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(st.st_size)); // Content-Length
 
   FILE* f = fdopen(fd, "rb");
-  if(f == 0)
+  if(f == 0) {
+    free(body.text);
     YIKES(-errno);
+  }
 
   curl_easy_setopt(curl, CURLOPT_INFILE, f);
 
@@ -1260,8 +1262,6 @@ static int complete_multipart_upload(const char *path, string upload_id,
     cout << "      complete_multipart_upload [path=" << path <<  "]" << endl;
 
   // initialization of variables
-  body.text = (char *)malloc(1);
-  body.size = 0; 
   curl = NULL;
 
   postContent.clear();
@@ -1721,6 +1721,7 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
 		  // get a list of all the objects
 		  if((list_bucket(parent_dir_path.c_str(), &s3_objects)) != 0) {
 		          free_object_list(s3_objects);
+                          free(body.text);
 			  return -EIO;
                   }
 
@@ -2051,6 +2052,7 @@ static int rename_object(const char *from, const char *to) {
   meta["x-amz-copy-source"] = urlEncode("/" + bucket + s3_realpath);
   meta["Content-Type"] = lookupMimeType(to);
   meta["x-amz-metadata-directive"] = "REPLACE";
+  free(s3_realpath);
 
   result = put_headers(to, meta);
   if(result != 0)
@@ -2083,6 +2085,7 @@ static int rename_large_object(const char *from, const char *to) {
 
   meta["Content-Type"] = lookupMimeType(to);
   meta["x-amz-copy-source"] = urlEncode("/" + bucket + s3_realpath);
+  free(s3_realpath);
 
   upload_id = initiate_multipart_upload(to, buf.st_size, meta);
   if(upload_id.size() == 0)
