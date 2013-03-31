@@ -3032,8 +3032,8 @@ static int append_objects_from_xml(const char *xml, struct s3_object **s3_object
 
 	xmlXPathObjectPtr size_xml = xmlXPathEvalExpression((xmlChar *) "s3:Size", ctx);
 	xmlNodeSetPtr size_nodes = size_xml->nodesetval;
-	char *size_string = get_string(doc, size_nodes->nodeTab[0]->xmlChildrenNode);
-	long size = strtoul(size_string, (char **)NULL, 10);
+	std::string size_string = get_string(doc, size_nodes->nodeTab[0]->xmlChildrenNode);
+	long size = strtoul(size_string.c_str(), (char **)NULL, 10);
 
     // if object key ends with / and size is zero, then it is a directory object. DO not put it in the list
     if (key_string.find_last_of('/') != key_string.length() -1 || size != 0) {
@@ -3123,8 +3123,12 @@ static std::string get_object_name(xmlDocPtr doc, xmlNodePtr node) {
   return mybasename(xmlStr);
 }
 
-static char *get_string(xmlDocPtr doc, xmlNodePtr node) {
-  return (char *)xmlNodeListGetString(doc, node, 1);
+static std::string get_string(xmlDocPtr doc, xmlNodePtr node) {
+  char *tmp = (char *)xmlNodeListGetString(doc, node, 1);
+  std::string str = std::string(tmp);
+  xmlFree(tmp);
+
+  return str;
 }
 
 
@@ -3134,6 +3138,7 @@ static long get_time(xmlDocPtr doc, xmlNodePtr node) {
   struct tm ctime;
   memset(&ctime, 0, sizeof(struct tm));
   strptime(time_string, "%FT%T%z", &ctime);
+  xmlFree(time_string);
   return mktime(&ctime);
 }
 

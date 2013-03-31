@@ -113,7 +113,7 @@ static bool is_truncated(const char *xml);
 static int append_objects_from_xml(const char *xml, struct s3_object **head);
 static const char *get_next_marker(const char *xml);
 static std::string get_object_name(xmlDocPtr doc, xmlNodePtr node);
-static char *get_string(xmlDocPtr doc, xmlNodePtr node);
+static std::string get_string(xmlDocPtr doc, xmlNodePtr node);
 static long get_time(xmlDocPtr doc, xmlNodePtr node);
 
 static int put_headers(const char *path, headers_t meta);
