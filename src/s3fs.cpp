@@ -1718,8 +1718,10 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
 		  struct s3_object *s3_objects_ptr = NULL;
 
 		  // get a list of all the objects
-		  if((list_bucket(parent_dir_path.c_str(), &s3_objects)) != 0)
+		  if((list_bucket(parent_dir_path.c_str(), &s3_objects)) != 0) {
+		          free_object_list(s3_objects);
 			  return -EIO;
+                  }
 
 		  s3_objects_ptr = s3_objects;
 		  while(s3_objects_ptr != NULL) {
@@ -1742,7 +1744,7 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
 		  	  s3_objects_ptr = s3_objects_ptr->next;
 		  }
 
-		  free_object_list(s3_objects_ptr);
+		  free_object_list(s3_objects);
 	  }
   }
 
