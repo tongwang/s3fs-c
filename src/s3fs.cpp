@@ -269,6 +269,7 @@ time_t expiry_to_epoch(std::string expiry)
 {
     struct tm tm;
 
+    memset(&tm, 0, sizeof(struct tm));
     char *zone = strptime(expiry.c_str(), "%Y-%m-%dT%H:%M:%S", &tm);
     if (zone[0] != (char)'Z') {
         // time parsing in C is a horror!
