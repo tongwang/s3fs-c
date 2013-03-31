@@ -3022,8 +3022,7 @@ static int append_objects_from_xml(const char *xml, struct s3_object **s3_object
     xmlXPathObjectPtr key_xml = xmlXPathEvalExpression((xmlChar *) "s3:Key", ctx);
     xmlNodeSetPtr key_nodes = key_xml->nodesetval;
     string key_string = get_string(doc, key_nodes->nodeTab[0]->xmlChildrenNode);
-    char *name = get_object_name(doc, key_nodes->nodeTab[0]->xmlChildrenNode);
-    string name_string = string(name);
+    std::string name_string = get_object_name(doc, key_nodes->nodeTab[0]->xmlChildrenNode);
 
     xmlXPathObjectPtr last_modified_xml = xmlXPathEvalExpression((xmlChar *) "s3:LastModified", ctx);
 	xmlNodeSetPtr last_modified_nodes = last_modified_xml->nodesetval;
@@ -3064,9 +3063,9 @@ static int append_objects_from_xml(const char *xml, struct s3_object **s3_object
     // object name
     xmlXPathObjectPtr prefix = xmlXPathEvalExpression((xmlChar *) "s3:Prefix", ctx);
     xmlNodeSetPtr prefix_nodes = prefix->nodesetval;
-    char *name = get_object_name(doc, prefix_nodes->nodeTab[0]->xmlChildrenNode);
+    std::string name = get_object_name(doc, prefix_nodes->nodeTab[0]->xmlChildrenNode);
 
-    if((insert_object(name, true, 0, 0, s3_object_list)) != 0)
+    if((insert_object(name.c_str(), true, 0, 0, s3_object_list)) != 0)
       return -1;
 
     xmlXPathFreeObject(prefix);
@@ -3114,8 +3113,12 @@ static bool is_truncated(const char *xml) {
   return false;
 }
 
-static char *get_object_name(xmlDocPtr doc, xmlNodePtr node) {
-  return (char *) mybasename((char *) xmlNodeListGetString(doc, node, 1)).c_str();
+static std::string get_object_name(xmlDocPtr doc, xmlNodePtr node) {
+  xmlChar *xmlTmpStr = xmlNodeListGetString(doc, node, 1);
+  std::string xmlStr = std::string((char*)xmlTmpStr);
+  xmlFree(xmlTmpStr);
+
+  return mybasename(xmlStr);
 }
 
 static char *get_string(xmlDocPtr doc, xmlNodePtr node) {
