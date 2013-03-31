@@ -3582,7 +3582,7 @@ std::string readCredentials(const std::string role)
 
   std::string url(CREDENTIALS_URL);
   url += role;
-  curl = curl_easy_init();
+  curl = create_curl_handle();
   if (curl) {
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
@@ -3592,7 +3592,7 @@ std::string readCredentials(const std::string role)
       fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
     else
       credentials = std::string(chunk.memory);
-    curl_easy_cleanup(curl);
+    destroy_curl_handle(curl);
   }
   free(chunk.memory);
   return credentials;
