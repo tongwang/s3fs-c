@@ -570,6 +570,19 @@ int get_headers(const char* path, headers_t& meta) {
   return 0;
 }
 
+// file descripto version of tmpfile()
+static int tmpfile_fd()
+{
+    FILE *fp = tmpfile();
+    if (fp == NULL)
+        return(-1);
+    int fd = fileno(fp);
+    int newfd = dup(fd);
+    fclose(fp);
+
+    return(newfd);
+}
+
 int get_local_fd(const char* path) {
   int fd = -1;
   int result;
@@ -627,10 +640,10 @@ int get_local_fd(const char* path) {
         fd = open(cache_path.c_str(), O_CREAT|O_RDWR|O_TRUNC, mode);
       } else {
         // its a folder; do *not* create anything in local cache... (###TODO do this in a better way)
-        fd = fileno(tmpfile());
+        fd = tmpfile_fd();
       }
     } else {
-      fd = fileno(tmpfile());
+      fd = tmpfile_fd();
     }
 
     if(fd == -1)
@@ -664,6 +677,7 @@ int get_local_fd(const char* path) {
     result = my_curl_easy_perform(curl, NULL, f);
     if(result != 0) {
       destroy_curl_handle(curl);
+      fclose(f);
       free(s3_realpath);
 
       return -result;
@@ -685,6 +699,10 @@ int get_local_fd(const char* path) {
         YIKES(-errno);
       }
     }
+    // trick to close the file handle while keeping the fd open
+    int newfd = dup(fd);
+    fclose(f);
+    fd = newfd;
   }
 
   free(s3_realpath);
