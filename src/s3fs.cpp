@@ -2477,7 +2477,7 @@ static int s3fs_truncate(const char *path, off_t size) {
   if(result != 0)
      return result;
 
-  fd = fileno(tmpfile());
+  fd = tmpfile_fd();
   if(fd == -1) {
     syslog(LOG_ERR, "error: line %d: %d", __LINE__, -errno);
     return -errno;
