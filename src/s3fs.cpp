@@ -570,7 +570,7 @@ int get_headers(const char* path, headers_t& meta) {
   return 0;
 }
 
-// file descripto version of tmpfile()
+// file descriptor version of tmpfile()
 static int tmpfile_fd()
 {
     FILE *fp = tmpfile();
@@ -911,7 +911,12 @@ static int put_local_fd_small_file(const char* path, headers_t meta, int fd) {
   curl_easy_setopt(curl, CURLOPT_UPLOAD, true); // HTTP PUT
   curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(st.st_size)); // Content-Length
 
-  FILE* f = fdopen(fd, "rb");
+  int newfd = dup(fd);
+  if (newfd == -1) {
+    free(body.text);
+    YIKES(-errno);
+  }
+  FILE* f = fdopen(newfd, "rb");
   if(f == 0) {
     free(body.text);
     YIKES(-errno);
@@ -950,6 +955,7 @@ static int put_local_fd_small_file(const char* path, headers_t meta, int fd) {
   curl_easy_setopt(curl, CURLOPT_URL, my_url.c_str());
 
   result = my_curl_easy_perform(curl, &body, f);
+  fclose(f);
 
   if(body.text)
     free(body.text);
@@ -988,7 +994,10 @@ static int put_local_fd_big_file(const char* path, headers_t meta, int fd) {
   }
 
   // Open the source file
-  pSourceFile = fdopen(fd, "rb");
+  int newfd = dup(fd);
+  if (newfd == -1)
+    YIKES(-errno);
+  pSourceFile = fdopen(newfd, "rb");
   if(pSourceFile == NULL) {
     syslog(LOG_ERR, "%d###result=%d", __LINE__, errno); \
     return(-errno);
@@ -1023,6 +1032,7 @@ static int put_local_fd_big_file(const char* path, headers_t meta, int fd) {
 
       if(buffer)
         free(buffer);
+      fclose(pSourceFile);
 
       return(-EIO);
     } 
@@ -1032,6 +1042,7 @@ static int put_local_fd_big_file(const char* path, headers_t meta, int fd) {
     if((partfd = mkstemp(part.path)) == -1) {
       if(buffer) 
         free(buffer);
+      fclose(pSourceFile);
 
       YIKES(-errno);
     }
@@ -1042,6 +1053,7 @@ static int put_local_fd_big_file(const char* path, headers_t meta, int fd) {
                       __LINE__, errno);
       if(buffer)
         free(buffer);
+      fclose(pSourceFile);
 
       return(-errno);
     }
@@ -1055,6 +1067,7 @@ static int put_local_fd_big_file(const char* path, headers_t meta, int fd) {
       fclose(pPartFile);
       if(buffer)
         free(buffer);
+      fclose(pSourceFile);
 
       return(-EIO);
     } 
@@ -1066,11 +1079,14 @@ static int put_local_fd_big_file(const char* path, headers_t meta, int fd) {
     part.etag = upload_part(path, part.path, parts.size() + 1, uploadId);
 
     // delete temporary part file
-    if(remove(part.path) != 0)
+    if(remove(part.path) != 0) {
+      fclose(pSourceFile);
       YIKES(-errno);
-
+    }
     parts.push_back(part);
   } // while(lSize > 0)
+
+  fclose(pSourceFile);
 
   return complete_multipart_upload(path, uploadId, parts);
 }
