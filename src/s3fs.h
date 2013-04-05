@@ -26,6 +26,13 @@
   return result; \
 }
 
+#define CREDENTIALS_URL "http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+
+struct MemoryStruct {
+  char *memory;
+  size_t size;
+};
+
 long connect_timeout = 10;
 time_t readwrite_timeout = 30;
 
@@ -38,10 +45,13 @@ static std::string host = "http://s3.amazonaws.com";
 static std::string service_path = "/";
 std::string bucket = "";
 std::string mount_prefix = "";
+std::string iam_role = "";
 static std::string mountpoint;
 std::string program_name;
 static std::string AWSAccessKeyId;
 static std::string AWSSecretAccessKey;
+static std::string AWSAccessToken;
+static time_t AWSAccessTokenExpiry;
 static mode_t root_mode = 0;
 static std::string passwd_file = "";
 static bool utility_mode = 0;
@@ -94,7 +104,6 @@ std::string md5sum(int fd);
 char *get_realpath(const char *path);
 
 static int insert_object(const char *name, bool is_common_prefix, long last_modified, long size, struct s3_object **head);
-static unsigned int count_object_list(struct s3_object *list);
 static int free_object(struct s3_object *object);
 static int free_object_list(struct s3_object *head);
 

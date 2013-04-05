@@ -45,11 +45,14 @@
 #include <vector>
 #include <algorithm>
 #include <string>
+#include <sstream>
 
 #include "s3fs.h"
 #include "curl.h"
 #include "cache.h"
 #include "string_util.h"
+
+#define MINUTE 60
 
 using namespace std;
 
@@ -61,6 +64,9 @@ struct s3_object {
   bool is_common_prefix;
   struct s3_object *next;
 };
+
+std::string parse_line(std::string buffer, const char *look_for);
+std::string readCredentials(const std::string role);
 
 class auto_curl_slist {
  public:
@@ -155,18 +161,6 @@ static int insert_object(const char *name, bool is_common_prefix, long last_modi
   *s3_objects = new_object;
 
   return 0;
-}
-
-static unsigned int count_object_list(struct s3_object *list) {
-  unsigned int count = 0;
-  struct s3_object *head = list;
-
-  while(head != NULL) {
-    count++;
-    head = head->next;
-  }
-
-  return count;
 }
 
 static int free_object(struct s3_object *object) {
@@ -266,6 +260,77 @@ void free_mvnodes(MVNODE *head) {
 
   return;
 }
+
+/*
+ * Convert the Token expiry time from the instance meta-data into
+ * epoch seconds
+*/
+time_t expiry_to_epoch(std::string expiry)
+{
+    struct tm tm;
+
+    memset(&tm, 0, sizeof(struct tm));
+    char *zone = strptime(expiry.c_str(), "%Y-%m-%dT%H:%M:%S", &tm);
+    if (zone[0] != (char)'Z') {
+        // time parsing in C is a horror!
+        syslog(LOG_ERR, "Expiry TimeZone is not 'Z' - this probably breaks things\n");  
+    }
+    char *origTZ = getenv("TZ");
+    setenv("TZ", "", 1);
+    tzset();
+    time_t expiry_t = mktime(&tm);
+    if (origTZ != NULL)
+        setenv("TZ", origTZ, 0);
+    else
+        unsetenv("TZ");
+    tzset();
+
+    return expiry_t;
+}
+
+
+/*
+ * Updates the AWS AccessKey, SecretKey and Token from
+ * the instance MetaData
+*/
+int get_iam_credentials()
+{
+    std::string line;
+    std::string newAccessKey, newSecretKey, newToken;
+    time_t newExpiry = 0;
+
+    std::string credentials = readCredentials(iam_role);
+    std::istringstream credentials_stream(credentials);
+    while(getline(credentials_stream, line, '\n')) {
+      if (newAccessKey.length() == 0)
+        newAccessKey = parse_line(line, "AccessKeyId\" : \"");
+      if (newSecretKey.length() == 0)
+        newSecretKey = parse_line(line, "SecretAccessKey\" : \"");
+      if (newToken.length() == 0)
+        newToken = parse_line(line, "Token\" : \"");
+      if (newExpiry == 0) {
+        std::string expiry = parse_line(line, "Expiration\" : \"");
+        if (expiry.length() > 0) {
+            newExpiry = expiry_to_epoch(expiry);
+        }
+      }
+    }
+    size_t len1 = newAccessKey.length();
+    size_t len2 = newSecretKey.length();
+    size_t len3 = newToken.length();
+
+    if (len1>0 && len2>0 && len3>0 && newExpiry > 0) {
+        AWSAccessKeyId       = newAccessKey;
+        AWSSecretAccessKey   = newSecretKey;
+        AWSAccessToken       = newToken;
+        AWSAccessTokenExpiry = newExpiry;
+        return 1;
+    }
+    else {
+        AWSAccessTokenExpiry += 20; // try again in 20 seconds
+        return 0;
+    }
+}
  
 /**
  * Returns the Amazon AWS signature for the given parameters.
@@ -282,6 +347,16 @@ string calc_signature(
   int offset;
   int write_attempts = 0;
 
+  time_t now = time(NULL);
+  if (foreground)
+    cout << "Token expires in " << AWSAccessTokenExpiry-now << " seconds" << endl;
+  if (AWSAccessTokenExpiry-now < 20*MINUTE) {
+    if (get_iam_credentials())
+        syslog(LOG_INFO, "got new credentials ok");
+    else
+        syslog(LOG_ERR, "could not get new credentials");  
+  }
+
   string Signature;
   string StringToSign;
   StringToSign += method + "\n";
@@ -289,6 +364,10 @@ string calc_signature(
   StringToSign += content_type + "\n";
   StringToSign += date + "\n";
   int count = 0;
+
+  std::string token = std::string("x-amz-security-token:")+AWSAccessToken;
+  headers = curl_slist_append(headers,token.c_str());
+
   if(headers != 0) {
     do {
       if(strncmp(headers->data, "x-amz", 5) == 0) {
@@ -444,6 +523,7 @@ int get_headers(const char* path, headers_t& meta) {
   string date = get_date();
   headers.append("Date: " + date);
   headers.append("Content-Type: ");
+
   if (public_bucket.substr(0,1) != "1") {
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("HEAD", "", date, headers.get(), resource));
@@ -719,7 +799,6 @@ static int put_multipart_headers(const char *path, headers_t meta) {
   string resource;
   string upload_id;
   struct stat buf;
-  struct BodyStruct body;
   vector <file_part> parts;
 
   if(foreground) 
@@ -728,9 +807,6 @@ static int put_multipart_headers(const char *path, headers_t meta) {
   s3_realpath = get_realpath(path);
   resource = urlEncode(service_path + bucket + s3_realpath);
   url = host + resource;
-
-  body.text = (char *)malloc(1);
-  body.size = 0;
 
   s3fs_getattr(path, &buf);
 
@@ -1456,9 +1532,10 @@ string copy_part(const char *from, const char *to, int part_number, string uploa
   if(use_rrs.substr(0,1) == "1")
     headers.append("x-amz-storage-class:REDUCED_REDUNDANCY");
 
-  if(public_bucket.substr(0,1) != "1")
+  if(public_bucket.substr(0,1) != "1") {
     headers.append("Authorization: AWS " + AWSAccessKeyId + ":" +
       calc_signature("PUT", ContentType, date, headers.get(), resource));
+  }
 
   curl = create_curl_handle();
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&body);
@@ -1927,15 +2004,9 @@ static int s3fs_unlink(const char *path) {
 }
 
 static int s3fs_rmdir(const char *path) {
-  char *s3_realpath;
-  struct BodyStruct body;
 
   if(foreground) 
     cout << "rmdir[path=" << path << "]" << endl;
-
-  s3_realpath = get_realpath(path);
-  body.text = (char *)malloc(1);
-  body.size = 0;
 
   // need to check if the directory is empty
   struct s3_object *s3_objects    = NULL;
@@ -2596,14 +2667,14 @@ static int s3fs_readdir(
   CURLMsg *msg;
   CURLMcode curlm_code;
   int n_reqs;
-  int n_objects;
   int remaining_messages;
   struct s3_object *s3_objects    = NULL;
   struct s3_object *s3_objects_ptr = NULL;
   auto_head curl_map;
 
-  if(foreground) 
+  if(foreground)  {
     cout << "readdir[path=" << path << "]" << endl;
+  }
 
   // get a list of all the objects
   if((list_bucket(path, &s3_objects)) != 0)
@@ -2611,8 +2682,6 @@ static int s3fs_readdir(
 
   if(s3_objects == NULL)
     return 0;
-
-  n_objects = count_object_list(s3_objects);
 
   // populate fuse buffer
   s3_objects_ptr = s3_objects;
@@ -2931,7 +3000,6 @@ static int list_bucket(const char *path, struct s3_object **s3_objects) {
 static int append_objects_from_xml(const char *xml, struct s3_object **s3_object_list) {
   xmlDocPtr doc;
   xmlXPathContextPtr ctx;
-
 
   doc = xmlReadMemory(xml, strlen(xml), "", NULL, 0);
   if(doc == NULL)
@@ -3480,6 +3548,70 @@ static void read_passwd_file (void) {
   return;
 }
 
+static size_t curlReadHandler(void *contents, size_t size, size_t nmemb, void *userp)
+{
+  size_t realsize = size * nmemb;
+  struct MemoryStruct *mem = (struct MemoryStruct *)userp;
+
+  //FCC: This is a problem memory lost on realloc faliure
+  mem->memory = (char *)realloc(mem->memory, mem->size + realsize + 1);
+  if(mem->memory == NULL) {
+    printf("not enough memory (realloc returned NULL)\n");
+    return 0;
+  }
+ 
+  memcpy(&(mem->memory[mem->size-1]), contents, realsize);
+  mem->size += realsize;
+  mem->memory[mem->size] = 0;
+ 
+  return realsize;
+}
+
+std::string readCredentials(const std::string role)
+{
+  CURL *curl;
+  CURLcode res;
+  std::string credentials;
+
+  struct MemoryStruct chunk;
+  if (!(chunk.memory = (char *)malloc(1))) {
+    cerr << "malloc(1) in readCredentials() failed - not good!\n";
+    return credentials;
+  }
+  chunk.size = 1;
+
+  std::string url(CREDENTIALS_URL);
+  url += role;
+  curl = create_curl_handle();
+  if (curl) {
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlReadHandler);
+   
+    if ((res = curl_easy_perform(curl)))
+      fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+    else
+      credentials = std::string(chunk.memory);
+    destroy_curl_handle(curl);
+  }
+  free(chunk.memory);
+  return credentials;
+}
+
+std::string parse_line(std::string buffer, const char *look_for)
+{
+  std::string to_find(look_for);
+  std::string found;
+  size_t pos1 = buffer.find(to_find);
+  if (pos1 != string::npos) {
+    size_t n = to_find.length();
+    size_t pos2 = buffer.find("\"", pos1+n);
+    found = buffer.substr(pos1+n, pos2-pos1-n);
+  }
+  return found;
+}
+
+
 /////////////////////////////////////////////////////////////
 // get_access_keys
 //
@@ -3494,6 +3626,19 @@ static void read_passwd_file (void) {
 // 3 - from environment variables
 // 4 - from the users ~/.passwd-s3fs
 // 5 - from /etc/passwd-s3fs
+// 6 - from the instance metadata
+//
+//[ec2-user@ip-10-202-185-59 src]$ GET http://169.254.169.254/latest/meta-data/iam/security-credentials/s3fs
+// {
+//   "Code" : "Success",
+//   "LastUpdated" : "2013-03-10T06:13:03Z",
+//   "Type" : "AWS-HMAC",
+//   "AccessKeyId" : "ASIAIMNPB336YSJ5G4TQ",
+//   "SecretAccessKey" : "qgx2YuN71yA52/jaz+VHM8fboY+Ex/C4+iQHBXBb",
+//   "Token" : "AQoDYXdzED8aoAKXvU/IJnHu6XE//4ha4516yKhMxJE7M/JmHAQEnl6Fzdnk1PA3qYP0+P6/VRIPfGjGL4o9DynS13oqiUTp1FYPvHbmugzUrfJIyMnxhz8pEK7LJfgvCC9nDDLV7tQpr7smO9/C0kbZpOjkz9HfWK6QcDHLgHqZ6sOF1Yw2DfdP5Rzer2ecZK1Qtn/lVUzDFy5ulRDMLfn2iL0hOaZHs67id6Zc7KqBC7CH+sCKQAmzN2JHi2YgIEzpXGmW9t6ALjfGJgeW97FdViwJSwLqIb3vZF8tI7BWjMneifzVkhUbgudwK4HKOYk7y9W7t8nMjwFnkCM7HxrBtm6BbmNEI1FOh9lt2xKyOVFsX8Ay4/hK6VBJ5UMrETRG0D8V5Ejyhk0g98jwiQU=",
+//   "Expiration" : "2013-03-10T12:38:56Z"
+// }
+//
 /////////////////////////////////////////////////////////////
 static void get_access_keys (void) {
 
@@ -3586,7 +3731,14 @@ static void get_access_keys (void) {
     read_passwd_file();
     return;
   }
-  
+
+  // 6 - from the system default location - FCC
+  AWSAccessTokenExpiry = 0;
+  if (iam_role.length() > 0) {
+    if (get_iam_credentials())
+      return;
+  }
+ 
   fprintf(stderr, "%s: could not determine how to establish security credentials\n",
            program_name.c_str());
   exit(EXIT_FAILURE);
@@ -3823,6 +3975,11 @@ static int my_fuse_opt_proc(void *data, const char *arg, int key, struct fuse_ar
       service_path = strchr(arg, '=') + 1;
       return 0;
     }
+    if (strstr(arg, "iam_role=") != 0) {
+      const char *ptr = strchr(arg, '=') + 1;
+      iam_role = std::string(ptr);
+      return 0;
+    }
     if (strstr(arg, "connect_timeout=") != 0) {
       connect_timeout = strtol(strchr(arg, '=') + 1, 0, 10);
       return 0;
@@ -3847,6 +4004,10 @@ static int my_fuse_opt_proc(void *data, const char *arg, int key, struct fuse_ar
          found = host.find_last_of('/');
          length = host.length();
       }
+      return 0;
+    }
+
+    if ( (strcmp(arg, "-r") == 0) || (strcmp(arg, "--role") == 0) ) {
       return 0;
     }
 
@@ -3895,6 +4056,7 @@ int main(int argc, char *argv[]) {
     {"help",    no_argument, NULL, 'h'},
     {"version", no_argument, 0,     0},
     {"debug",   no_argument, NULL, 'd'},
+    {"role",    required_argument, 0, 'r'},
     {0, 0, 0, 0}};
 
    // get progam name - emulate basename 
@@ -4037,8 +4199,7 @@ int main(int argc, char *argv[]) {
 
   if (utility_mode) {
      printf("Utility Mode\n");
-     int result;
-     result = list_multipart_uploads();
+     (void)list_multipart_uploads();
      exit(EXIT_SUCCESS);
   }
 
