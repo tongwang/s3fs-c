@@ -350,7 +350,8 @@ string calc_signature(
   time_t now = time(NULL);
   if (foreground)
     cout << "Token expires in " << AWSAccessTokenExpiry-now << " seconds" << endl;
-  if (AWSAccessTokenExpiry-now < 20*MINUTE) {
+
+  if ((iam_role.length() > 0)  && (AWSAccessTokenExpiry-now < 20*MINUTE)) {
     if (get_iam_credentials())
         syslog(LOG_INFO, "got new credentials ok");
     else
