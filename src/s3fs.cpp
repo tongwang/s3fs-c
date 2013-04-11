@@ -341,20 +341,23 @@ int get_iam_credentials()
  * @param resource e.g., "/pub"
  */
 string calc_signature(
-    string method, string content_type, string date, curl_slist* headers, string resource) {
+  string method, string content_type, string date, curl_slist* headers, string resource) {
   int ret;
   int bytes_written;
   int offset;
   int write_attempts = 0;
 
-  time_t now = time(NULL);
-  if (foreground)
-    cout << "Token expires in " << AWSAccessTokenExpiry-now << " seconds" << endl;
-  if (AWSAccessTokenExpiry-now < 20*MINUTE) {
-    if (get_iam_credentials())
-        syslog(LOG_INFO, "got new credentials ok");
-    else
-        syslog(LOG_ERR, "could not get new credentials");  
+  if (iam_role.length() > 0) {
+      time_t now = time(NULL);
+      if (foreground)
+        cout << "Token expires in " << AWSAccessTokenExpiry-now << " seconds" << endl;
+
+      if (AWSAccessTokenExpiry-now < 20*MINUTE) {
+        if (get_iam_credentials())
+            syslog(LOG_INFO, "got new credentials ok");
+        else
+            syslog(LOG_ERR, "could not get new credentials");  
+      }
   }
 
   string Signature;
@@ -365,8 +368,10 @@ string calc_signature(
   StringToSign += date + "\n";
   int count = 0;
 
-  std::string token = std::string("x-amz-security-token:")+AWSAccessToken;
-  headers = curl_slist_append(headers,token.c_str());
+  if (iam_role.length() > 0) {
+    std::string token = std::string("x-amz-security-token:")+AWSAccessToken;
+    headers = curl_slist_append(headers,token.c_str());
+  }
 
   if(headers != 0) {
     do {
