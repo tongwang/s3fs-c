@@ -575,6 +575,19 @@ int get_headers(const char* path, headers_t& meta) {
   return 0;
 }
 
+// file descriptor version of tmpfile()
+static int tmpfile_fd()
+{
+    FILE *fp = tmpfile();
+    if (fp == NULL)
+        return(-1);
+    int fd = fileno(fp);
+    int newfd = dup(fd);
+    fclose(fp);
+
+    return(newfd);
+}
+
 int get_local_fd(const char* path) {
   int fd = -1;
   int result;
@@ -632,10 +645,10 @@ int get_local_fd(const char* path) {
         fd = open(cache_path.c_str(), O_CREAT|O_RDWR|O_TRUNC, mode);
       } else {
         // its a folder; do *not* create anything in local cache... (###TODO do this in a better way)
-        fd = fileno(tmpfile());
+        fd = tmpfile_fd();
       }
     } else {
-      fd = fileno(tmpfile());
+      fd = tmpfile_fd();
     }
 
     if(fd == -1)
@@ -669,6 +682,7 @@ int get_local_fd(const char* path) {
     result = my_curl_easy_perform(curl, NULL, f);
     if(result != 0) {
       destroy_curl_handle(curl);
+      fclose(f);
       free(s3_realpath);
 
       return -result;
@@ -690,6 +704,10 @@ int get_local_fd(const char* path) {
         YIKES(-errno);
       }
     }
+    // trick to close the file handle while keeping the fd open
+    int newfd = dup(fd);
+    fclose(f);
+    fd = newfd;
   }
 
   free(s3_realpath);
@@ -898,9 +916,16 @@ static int put_local_fd_small_file(const char* path, headers_t meta, int fd) {
   curl_easy_setopt(curl, CURLOPT_UPLOAD, true); // HTTP PUT
   curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(st.st_size)); // Content-Length
 
-  FILE* f = fdopen(fd, "rb");
-  if(f == 0)
+  int newfd = dup(fd);
+  if (newfd == -1) {
+    free(body.text);
     YIKES(-errno);
+  }
+  FILE* f = fdopen(newfd, "rb");
+  if(f == 0) {
+    free(body.text);
+    YIKES(-errno);
+  }
 
   curl_easy_setopt(curl, CURLOPT_INFILE, f);
 
@@ -935,6 +960,7 @@ static int put_local_fd_small_file(const char* path, headers_t meta, int fd) {
   curl_easy_setopt(curl, CURLOPT_URL, my_url.c_str());
 
   result = my_curl_easy_perform(curl, &body, f);
+  fclose(f);
 
   if(body.text)
     free(body.text);
@@ -973,7 +999,10 @@ static int put_local_fd_big_file(const char* path, headers_t meta, int fd) {
   }
 
   // Open the source file
-  pSourceFile = fdopen(fd, "rb");
+  int newfd = dup(fd);
+  if (newfd == -1)
+    YIKES(-errno);
+  pSourceFile = fdopen(newfd, "rb");
   if(pSourceFile == NULL) {
     syslog(LOG_ERR, "%d###result=%d", __LINE__, errno); \
     return(-errno);
@@ -1008,6 +1037,7 @@ static int put_local_fd_big_file(const char* path, headers_t meta, int fd) {
 
       if(buffer)
         free(buffer);
+      fclose(pSourceFile);
 
       return(-EIO);
     } 
@@ -1017,6 +1047,7 @@ static int put_local_fd_big_file(const char* path, headers_t meta, int fd) {
     if((partfd = mkstemp(part.path)) == -1) {
       if(buffer) 
         free(buffer);
+      fclose(pSourceFile);
 
       YIKES(-errno);
     }
@@ -1027,6 +1058,7 @@ static int put_local_fd_big_file(const char* path, headers_t meta, int fd) {
                       __LINE__, errno);
       if(buffer)
         free(buffer);
+      fclose(pSourceFile);
 
       return(-errno);
     }
@@ -1040,6 +1072,7 @@ static int put_local_fd_big_file(const char* path, headers_t meta, int fd) {
       fclose(pPartFile);
       if(buffer)
         free(buffer);
+      fclose(pSourceFile);
 
       return(-EIO);
     } 
@@ -1051,11 +1084,14 @@ static int put_local_fd_big_file(const char* path, headers_t meta, int fd) {
     part.etag = upload_part(path, part.path, parts.size() + 1, uploadId);
 
     // delete temporary part file
-    if(remove(part.path) != 0)
+    if(remove(part.path) != 0) {
+      fclose(pSourceFile);
       YIKES(-errno);
-
+    }
     parts.push_back(part);
   } // while(lSize > 0)
+
+  fclose(pSourceFile);
 
   return complete_multipart_upload(path, uploadId, parts);
 }
@@ -1265,8 +1301,6 @@ static int complete_multipart_upload(const char *path, string upload_id,
     cout << "      complete_multipart_upload [path=" << path <<  "]" << endl;
 
   // initialization of variables
-  body.text = (char *)malloc(1);
-  body.size = 0; 
   curl = NULL;
 
   postContent.clear();
@@ -1724,8 +1758,11 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
 		  struct s3_object *s3_objects_ptr = NULL;
 
 		  // get a list of all the objects
-		  if((list_bucket(parent_dir_path.c_str(), &s3_objects)) != 0)
+		  if((list_bucket(parent_dir_path.c_str(), &s3_objects)) != 0) {
+		          free_object_list(s3_objects);
+                          free(body.text);
 			  return -EIO;
+                  }
 
 		  s3_objects_ptr = s3_objects;
 		  while(s3_objects_ptr != NULL) {
@@ -1748,7 +1785,7 @@ static int _s3fs_getattr(const char *path, struct stat *stbuf, bool resolve_no_e
 		  	  s3_objects_ptr = s3_objects_ptr->next;
 		  }
 
-		  free_object_list(s3_objects_ptr);
+		  free_object_list(s3_objects);
 	  }
   }
 
@@ -2054,6 +2091,7 @@ static int rename_object(const char *from, const char *to) {
   meta["x-amz-copy-source"] = urlEncode("/" + bucket + s3_realpath);
   meta["Content-Type"] = lookupMimeType(to);
   meta["x-amz-metadata-directive"] = "REPLACE";
+  free(s3_realpath);
 
   result = put_headers(to, meta);
   if(result != 0)
@@ -2086,6 +2124,7 @@ static int rename_large_object(const char *from, const char *to) {
 
   meta["Content-Type"] = lookupMimeType(to);
   meta["x-amz-copy-source"] = urlEncode("/" + bucket + s3_realpath);
+  free(s3_realpath);
 
   upload_id = initiate_multipart_upload(to, buf.st_size, meta);
   if(upload_id.size() == 0)
@@ -2459,7 +2498,7 @@ static int s3fs_truncate(const char *path, off_t size) {
   if(result != 0)
      return result;
 
-  fd = fileno(tmpfile());
+  fd = tmpfile_fd();
   if(fd == -1) {
     syslog(LOG_ERR, "error: line %d: %d", __LINE__, -errno);
     return -errno;
@@ -3028,8 +3067,7 @@ static int append_objects_from_xml(const char *xml, struct s3_object **s3_object
     xmlXPathObjectPtr key_xml = xmlXPathEvalExpression((xmlChar *) "s3:Key", ctx);
     xmlNodeSetPtr key_nodes = key_xml->nodesetval;
     string key_string = get_string(doc, key_nodes->nodeTab[0]->xmlChildrenNode);
-    char *name = get_object_name(doc, key_nodes->nodeTab[0]->xmlChildrenNode);
-    string name_string = string(name);
+    std::string name_string = get_object_name(doc, key_nodes->nodeTab[0]->xmlChildrenNode);
 
     xmlXPathObjectPtr last_modified_xml = xmlXPathEvalExpression((xmlChar *) "s3:LastModified", ctx);
 	xmlNodeSetPtr last_modified_nodes = last_modified_xml->nodesetval;
@@ -3037,8 +3075,8 @@ static int append_objects_from_xml(const char *xml, struct s3_object **s3_object
 
 	xmlXPathObjectPtr size_xml = xmlXPathEvalExpression((xmlChar *) "s3:Size", ctx);
 	xmlNodeSetPtr size_nodes = size_xml->nodesetval;
-	char *size_string = get_string(doc, size_nodes->nodeTab[0]->xmlChildrenNode);
-	long size = strtoul(size_string, (char **)NULL, 10);
+	std::string size_string = get_string(doc, size_nodes->nodeTab[0]->xmlChildrenNode);
+	long size = strtoul(size_string.c_str(), (char **)NULL, 10);
 
     // if object key ends with / and size is zero, then it is a directory object. DO not put it in the list
     if (key_string.find_last_of('/') != key_string.length() -1 || size != 0) {
@@ -3070,9 +3108,9 @@ static int append_objects_from_xml(const char *xml, struct s3_object **s3_object
     // object name
     xmlXPathObjectPtr prefix = xmlXPathEvalExpression((xmlChar *) "s3:Prefix", ctx);
     xmlNodeSetPtr prefix_nodes = prefix->nodesetval;
-    char *name = get_object_name(doc, prefix_nodes->nodeTab[0]->xmlChildrenNode);
+    std::string name = get_object_name(doc, prefix_nodes->nodeTab[0]->xmlChildrenNode);
 
-    if((insert_object(name, true, 0, 0, s3_object_list)) != 0)
+    if((insert_object(name.c_str(), true, 0, 0, s3_object_list)) != 0)
       return -1;
 
     xmlXPathFreeObject(prefix);
@@ -3120,12 +3158,20 @@ static bool is_truncated(const char *xml) {
   return false;
 }
 
-static char *get_object_name(xmlDocPtr doc, xmlNodePtr node) {
-  return (char *) mybasename((char *) xmlNodeListGetString(doc, node, 1)).c_str();
+static std::string get_object_name(xmlDocPtr doc, xmlNodePtr node) {
+  xmlChar *xmlTmpStr = xmlNodeListGetString(doc, node, 1);
+  std::string xmlStr = std::string((char*)xmlTmpStr);
+  xmlFree(xmlTmpStr);
+
+  return mybasename(xmlStr);
 }
 
-static char *get_string(xmlDocPtr doc, xmlNodePtr node) {
-  return (char *)xmlNodeListGetString(doc, node, 1);
+static std::string get_string(xmlDocPtr doc, xmlNodePtr node) {
+  char *tmp = (char *)xmlNodeListGetString(doc, node, 1);
+  std::string str = std::string(tmp);
+  xmlFree(tmp);
+
+  return str;
 }
 
 
@@ -3135,6 +3181,7 @@ static long get_time(xmlDocPtr doc, xmlNodePtr node) {
   struct tm ctime;
   memset(&ctime, 0, sizeof(struct tm));
   strptime(time_string, "%FT%T%z", &ctime);
+  xmlFree(time_string);
   return mktime(&ctime);
 }
 
